@@ -3,6 +3,7 @@ import crypto from "crypto";
 
 const CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET!;
 const CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN!;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY!;
 
 function validateSignature(body: string, signature: string) {
   const hash = crypto
@@ -26,6 +27,33 @@ async function replyMessage(replyToken: string, text: string) {
   });
 }
 
+async function analyzeFoodText(foodText: string): Promise<string> {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "คุณคือ 'กินเป็น' ผู้ช่วย AI ด้านโภชนาการที่พูดจาเป็นกันเอง เหมือนเพื่อนที่เข้าใจอาหาร ไม่ใช่หมอหรือนักโภชนาการ เมื่อผู้ใช้บอกชื่ออาหารที่กิน ให้ประมาณค่าพลังงาน (แคล) โปรตีน คาร์บ ไขมัน แบบคร่าวๆ (ใช้คำว่า 'ประมาณ' เสมอ ไม่ต้องแม่นยำเป๊ะ) แล้วให้คำแนะนำสั้นๆ ว่ามื้อต่อไปควรเพิ่มอะไร ตอบเป็นภาษาไทย กระชับ ไม่เกิน 5-6 บรรทัด ไม่ใช้ศัพท์วิชาการเกินจำเป็น",
+        },
+        {
+          role: "user",
+          content: `กินไป: ${foodText}`,
+        },
+      ],
+    }),
+  });
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || "ขอโทษครับ วิเคราะห์ไม่สำเร็จ ลองส่งใหม่อีกครั้งนะครับ";
+}
+
 export async function POST(req: NextRequest) {
   try {
     const rawBody = await req.text();
@@ -40,7 +68,9 @@ export async function POST(req: NextRequest) {
 
     for (const event of events) {
       if (event.type === "message" && event.message.type === "text") {
-        await replyMessage(event.replyToken, "กินเป็นได้รับข้อความแล้ว");
+        const userText = event.message.text;
+        const aiReply = await analyzeFoodText(userText);
+        await replyMessage(event.replyToken, aiReply);
       }
     }
 
