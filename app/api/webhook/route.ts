@@ -78,6 +78,9 @@ async function updateUser(userId: string, fields: Partial<UserProfile>) {
 const MALE_GOALS = ["เพิ่มคุณภาพอสุจิ", "เพิ่มกล้าม/พลังงาน", "ลดน้ำหนัก", "สุขภาพทั่วไป"];
 const FEMALE_GOALS = ["เพิ่มกล้าม/พลังงาน", "ลดน้ำหนัก", "สุขภาพทั่วไป"];
 
+const WELCOME_TEXT =
+  "สวัสดีครับ ผมกินเป็น 🙂\nเป็น AI ผู้ช่วยเรื่องกินและโภชนาการ ใช้ง่ายมาก แค่พิมพ์บอกว่ากินอะไรมา ผมจะช่วยประมาณแคลอรี่และสารอาหารให้ พร้อมจดจำได้ว่าวันนี้กินอะไรไปแล้วบ้าง\n\nก่อนเริ่ม ขอถามข้อมูลนิดหน่อยเพื่อแนะนำได้ตรงจุดนะครับ\n\nคุณเป็นเพศอะไรครับ?";
+
 const FERTILITY_TARGETS = {
   zinc_mg: 11,
   selenium_mcg: 55,
@@ -444,7 +447,7 @@ async function analyzeFoodText(
             `ข้อมูลผู้ใช้: ${profileNote}\n` +
             `คำแนะนำเรื่อง fertility: ${fertilityInstruction}\n` +
             `คำแนะนำเรื่องเป้าหมาย: ${goalInstruction}\n\n` +
-            "ถ้าผู้ใช้พิมพ์เรื่องอื่นที่ไม่เกี่ยวกับอาหาร ตอบใน 'reply' แบบเพื่อนคุยสั้นๆ แล้วชวนกลับมาเรื่องอาหาร และให้ตัวเลขทั้งหมดเป็น 0\n\n" +
+            "ถ้าผู้ใช้พิมพ์เรื่องอื่นที่ไม่เกี่ยวกับอาหาร ตอบใน 'reply' แบบเพื่อนคุยเป็นธรรมชาติ ไม่ต้องรีบชวนกลับมาเรื่องอาหารทุกครั้ง คุยตามบริบทไปได้เลยสั้นๆ แต่ถ้าเรื่องนั้นซับซ้อน ต้องใช้ความรู้เฉพาะทางลึก หรือยาวเกินคำตอบสั้นๆ ให้บอกตรงๆ ว่าเรื่องนี้แนะนำให้ลองถามผู้เชี่ยวชาญหรือ ChatGPT ดูดีกว่า เพราะกินเป็นถนัดเรื่องอาหารและโภชนาการเป็นหลัก และให้ตัวเลขทั้งหมดเป็น 0\n\n" +
             "ห้ามพูดในเชิงฟันธงหรืออ้างว่าเป็นคำแนะนำทางการแพทย์ ตอบกระชับ ไม่เกิน 5-6 บรรทัด\n\n" +
             `ข้อมูลวันนี้ก่อนมื้อนี้: ${contextNote}`,
         },
@@ -565,7 +568,37 @@ export async function POST(req: NextRequest) {
     const json = JSON.parse(rawBody);
     const events = json.events || [];
 
-    for (const event of events) {
+        for (const event of events) {
+      if (event.type === "follow") {
+        const userId = event.source.userId;
+        const replyToken = event.replyToken;
+        const existingUser = await getUser(userId);
+        if (!existingUser) {
+          await createUser(userId);
+          await replyMessage(replyToken, WELCOME_TEXT, ["ชาย", "หญิง"]);
+        }
+        continue;
+      }
+
+      if (event.type === "message" && event.message.type === "text") {
+        const messageId = event.message.id as string;
+
+        if (await isDuplicateMessage(messageId)) {
+          continue;
+        }
+
+        const userId = event.source.userId;
+        const userText = event.message.text;
+        const replyToken = event.replyToken;
+
+        const user = await getUser(userId);
+
+        if (!user) {
+          await createUser(userId);
+          await replyMessage(replyToken, WELCOME_TEXT, ["ชาย", "หญิง"]);
+          continue;
+        }
+        for (const event of events) {
       if (event.type === "message" && event.message.type === "text") {
         const messageId = event.message.id as string;
 
