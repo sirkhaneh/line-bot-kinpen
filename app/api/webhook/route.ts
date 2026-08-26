@@ -39,6 +39,17 @@ async function replyMessage(replyToken: string, text: string, quickReplyOptions?
   });
 }
 
+// ป้องกัน LINE webhook ส่งซ้ำ — ใช้ unique constraint ของ DB เช็คแบบ atomic
+async function isDuplicateMessage(messageId: string): Promise<boolean> {
+  const { error } = await supabase.from("processed_messages").insert({ message_id: messageId });
+  if (error) {
+    if (error.code === "23505") return true; // unique_violation = เคยประมวลผลไปแล้ว
+    console.error("dedup check error:", error);
+    return false; // error อื่นที่ไม่ใช่ duplicate ให้ประมวลผลต่อไป ดีกว่าทำข้อความหาย
+  }
+  return false;
+}
+
 interface UserProfile {
   user_id: string;
   gender: string | null;
@@ -188,7 +199,7 @@ async function handleOnboarding(userId: string, user: UserProfile, text: string,
 
     await replyMessage(
       replyToken,
-      `เรียบร้อยครับ! 🎉\n\nจากข้อมูลของคุณ เป้าหมายพลังงานต่อวันอยู่ที่ประมาณ ${targetCalories} แคล โปรตีนประมาณ ${targetProtein} กรัม${extraNote}\n\n(ค่าประมาณกลางๆ ยังไม่รวมระดับกิจกรรมจริง ใช้เป็นแนวทางได้เลยครับ)\n\nลองส่งเมนูที่กินมาได้เลยครับ`
+      `เรียบร้อยครับ! 🎉\n\nจากข้อมูลของคุณ เป้าหมายพลังงานต่อวันอยู่ที่ประมาณ ${targetCalories} แคล โปรตีนประมาณ ${targetProtein} กรัม${extraNote}\n\n(ค่าประมาณกลางๆ ยังไม่รวมระดับกิจกรรมจริง ใช้เป็นแนวทางได้เลยครับ)\n\nลองส่งเมนูที่กินมาได้เลยครับ (พิมพ์ 'สรุปรายอาทิตย์' หรือ 'สรุปเดือนนี้' เพื่อดูภาพรวมย้อนหลังได้ด้วยนะ)`
     );
     return;
   }
@@ -265,6 +276,102 @@ async function getTodayTotals(
   return { totals, foodList };
 }
 
+// ตรวจจับคำสั่งขอสรุปย้อนหลัง
+function detectSummaryRequest(text: string): "week" | "month" | null {
+  const t = text.trim();
+  if (!/สรุป/.test(t)) return null;
+  if (/เดือน|30\s*วัน/.test(t)) return "month";
+  if (/อาทิตย์|สัปดาห์|7\s*วัน/.test(t)) return "week";
+  return null;
+}
+
+async function getPeriodStats(
+  userId: string,
+  days: number
+): Promise<{ totals: DailyTotals; daysLogged: number } | null> {
+  const cutoffISO = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await supabase
+    .from("food_logs")
+    .select(
+      "created_at, calories, protein_g, carb_g, fat_g, zinc_mg, selenium_mcg, omega3_mg, folate_mcg, vitamin_c_mg"
+    )
+    .eq("user_id", userId)
+    .gte("created_at", cutoffISO);
+
+  if (error || !data || data.length === 0) return null;
+
+  const totals = data.reduce(
+    (acc, row) => ({
+      calories: acc.calories + (row.calories || 0),
+      protein_g: acc.protein_g + (row.protein_g || 0),
+      carb_g: acc.carb_g + (row.carb_g || 0),
+      fat_g: acc.fat_g + (row.fat_g || 0),
+      zinc_mg: acc.zinc_mg + (row.zinc_mg || 0),
+      selenium_mcg: acc.selenium_mcg + (row.selenium_mcg || 0),
+      omega3_mg: acc.omega3_mg + (row.omega3_mg || 0),
+      folate_mcg: acc.folate_mcg + (row.folate_mcg || 0),
+      vitamin_c_mg: acc.vitamin_c_mg + (row.vitamin_c_mg || 0),
+    }),
+    { ...EMPTY_TOTALS }
+  );
+
+  const THAI_OFFSET_MS = 7 * 60 * 60 * 1000;
+  const loggedDates = new Set(
+    data.map((row) => {
+      const d = new Date(new Date(row.created_at).getTime() + THAI_OFFSET_MS);
+      return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+    })
+  );
+
+  return { totals, daysLogged: loggedDates.size };
+}
+
+function buildPeriodSummary(
+  periodLabel: string,
+  days: number,
+  stats: { totals: DailyTotals; daysLogged: number } | null,
+  targetCalories: number | null,
+  targetProtein: number | null,
+  showFertilityMicros: boolean
+): string {
+  if (!stats) {
+    return `ยังไม่มีข้อมูลใน${periodLabel}เลยครับ ลองบันทึกอาหารสักพักแล้วค่อยกลับมาดูสรุปนะครับ 🙂`;
+  }
+
+  const pct = (value: number, target: number) => Math.round((value / target) * 100);
+
+  const avg = {
+    calories: Math.round(stats.totals.calories / days),
+    protein_g: Math.round(stats.totals.protein_g / days),
+    carb_g: Math.round(stats.totals.carb_g / days),
+    fat_g: Math.round(stats.totals.fat_g / days),
+    zinc_mg: Math.round(stats.totals.zinc_mg / days),
+    selenium_mcg: Math.round(stats.totals.selenium_mcg / days),
+    omega3_mg: Math.round(stats.totals.omega3_mg / days),
+    folate_mcg: Math.round(stats.totals.folate_mcg / days),
+    vitamin_c_mg: Math.round(stats.totals.vitamin_c_mg / days),
+  };
+
+  let msg = `📅 สรุป${periodLabel} (บันทึกไป ${stats.daysLogged}/${days} วัน)\n\nเฉลี่ยต่อวัน:\n`;
+  msg += `แคล: ${avg.calories}`;
+  if (targetCalories) msg += `/${targetCalories} (${pct(avg.calories, targetCalories)}%)`;
+  msg += `\nโปรตีน: ${avg.protein_g}g`;
+  if (targetProtein) msg += `/${targetProtein}g (${pct(avg.protein_g, targetProtein)}%)`;
+  msg += `\nคาร์บ: ${avg.carb_g}g\nไขมัน: ${avg.fat_g}g`;
+
+  if (showFertilityMicros) {
+    msg += `\n\n🎯 เฉลี่ยสารอาหารเพื่ออสุจิ/วัน:\n`;
+    msg += `Zinc: ${avg.zinc_mg}/${FERTILITY_TARGETS.zinc_mg}mg (${pct(avg.zinc_mg, FERTILITY_TARGETS.zinc_mg)}%)\n`;
+    msg += `Selenium: ${avg.selenium_mcg}/${FERTILITY_TARGETS.selenium_mcg}mcg (${pct(avg.selenium_mcg, FERTILITY_TARGETS.selenium_mcg)}%)\n`;
+    msg += `Omega-3: ${avg.omega3_mg}/${FERTILITY_TARGETS.omega3_mg}mg (${pct(avg.omega3_mg, FERTILITY_TARGETS.omega3_mg)}%)\n`;
+    msg += `Folate: ${avg.folate_mcg}/${FERTILITY_TARGETS.folate_mcg}mcg (${pct(avg.folate_mcg, FERTILITY_TARGETS.folate_mcg)}%)\n`;
+    msg += `Vit C: ${avg.vitamin_c_mg}/${FERTILITY_TARGETS.vitamin_c_mg}mg (${pct(avg.vitamin_c_mg, FERTILITY_TARGETS.vitamin_c_mg)}%)`;
+  }
+
+  return msg;
+}
+
 interface AiResult {
   reply: string;
   calories: number;
@@ -321,24 +428,24 @@ async function analyzeFoodText(
             "คุณคือ 'กินเป็น' ผู้ช่วย AI ด้านโภชนาการที่พูดจาเป็นกันเอง เหมือนเพื่อนที่เข้าใจอาหาร ไม่ใช่หมอหรือนักโภชนาการ\n\n" +
             "ตอบกลับเป็น JSON เท่านั้น ตามโครงสร้างนี้:\n" +
             '{"reply": "ข้อความภาษาไทย กระชับ", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข, "zinc_mg": ตัวเลข, "selenium_mcg": ตัวเลข, "omega3_mg": ตัวเลข, "folate_mcg": ตัวเลข, "vitamin_c_mg": ตัวเลข}\n\n' +
-            "ตัวเลขทั้งหมด = ค่าประมาณรวมของทุกเมนูที่กล่าวถึงในข้อความนี้ เป็นจำนวนเต็ม ไม่ใช่ช่วง ถ้าเมนูไม่มีสารอาหารตัวนั้นเลยให้ใส่ 0\n\n" +
+            "ตัวเลขทั้งหมด = ค่าประมาณรวมของทุกเมนูที่กล่าวถึงในข้อความนี้ ปรับตามปริมาณจริงที่ผู้ใช้บอก (เช่น 'ครึ่งซอง' 'กินไม่หมด') เป็นจำนวนเต็ม ถ้าเมนูไม่มีสารอาหารตัวนั้นเลยให้ใส่ 0\n\n" +
             "แนวทางประมาณสารอาหารสำคัญ (คร่าวๆ พอ ไม่ต้องแม่นระดับห้องแล็บ):\n" +
             "- zinc_mg: สูงในหอยนางรม เนื้อแดง ไข่ ถั่ว เมล็ดฟักทอง\n" +
             "- selenium_mcg: สูงในอาหารทะเล ไข่ เครื่องใน ธัญพืชไม่ขัดสี\n" +
             "- omega3_mg: สูงในปลาทะเลน้ำลึก (แซลมอน ทูน่า ปลาซาบะ) วอลนัท เมล็ดแฟลกซ์\n" +
             "- folate_mcg: สูงในผักใบเขียวเข้ม ถั่ว ตับ\n" +
             "- vitamin_c_mg: สูงในผลไม้รสเปรี้ยว ฝรั่ง พริกหวาน มะละกอ\n\n" +
-            "เมื่อประมาณปริมาณอาหาร ให้สมมติเป็นปริมาณมาตรฐาน 1 หน่วยเสมอ โดยเลือกหน่วยให้เหมาะกับประเภทอาหาร (จาน/ชาม/แก้ว/ลูก/ฟอง/แผ่น หรือ 'ที่' ถ้าไม่แน่ใจ) และระบุหน่วยนั้นในคำตอบเสมอ\n\n" +
+            "เมื่อประมาณปริมาณอาหาร ให้สมมติเป็นปริมาณมาตรฐาน 1 หน่วย (จาน/ชาม/แก้ว/ลูก/ฟอง/แผ่น/ที่) เว้นแต่ผู้ใช้ระบุปริมาณต่างจากมาตรฐานเอง (เช่น ครึ่งซอง กินไม่หมด 2 จาน) ให้ปรับตัวเลขตามนั้น และระบุปริมาณที่ใช้ในคำตอบเสมอ\n\n" +
             "ใน 'reply' ต้องมีครบทุกข้อนี้เสมอ ห้ามข้าม:\n" +
-            "1. ชื่อเมนู + หน่วยมาตรฐานที่สมมติ + ค่าพลังงานโดยประมาณเป็นตัวเลขชัดเจน (เช่น 'ข้าวหน้าปลาทอด (1 จานมาตรฐาน) ประมาณ 600 แคล') พร้อมโปรตีนโดยประมาณเป็นตัวเลข (เช่น 'โปรตีนประมาณ 20 กรัม') ห้ามพูดลอยๆ โดยไม่มีตัวเลขเด็ดขาด\n" +
+            "1. ชื่อเมนู + ปริมาณที่สมมติ/ที่ผู้ใช้ระบุ + ค่าพลังงานโดยประมาณเป็นตัวเลขชัดเจน พร้อมโปรตีนโดยประมาณเป็นตัวเลข ห้ามพูดลอยๆ โดยไม่มีตัวเลขเด็ดขาด\n" +
             "2. ข้อสังเกตตามเป้าหมาย/fertility ของมื้อนี้\n" +
             "3. คำแนะนำมื้อถัดไปสั้นๆ\n\n" +
-            "**ห้ามพูดถึงยอดสะสมรวมทั้งวันในคำตอบเด็ดขาด ห้ามบวกเลขสะสมเอง** ระบบจะคำนวณยอดสะสมและต่อท้ายให้อัตโนมัติแยกต่างหากจากส่วนนี้\n\n" +
+            "**ห้ามพูดถึงยอดสะสมรวมทั้งวันในคำตอบเด็ดขาด ห้ามบวกเลขสะสมเอง** ระบบจะคำนวณยอดสะสมและต่อท้ายให้อัตโนมัติแยกต่างหาก\n\n" +
             `ข้อมูลผู้ใช้: ${profileNote}\n` +
             `คำแนะนำเรื่อง fertility: ${fertilityInstruction}\n` +
             `คำแนะนำเรื่องเป้าหมาย: ${goalInstruction}\n\n` +
             "ถ้าผู้ใช้พิมพ์เรื่องอื่นที่ไม่เกี่ยวกับอาหาร ตอบใน 'reply' แบบเพื่อนคุยสั้นๆ แล้วชวนกลับมาเรื่องอาหาร และให้ตัวเลขทั้งหมดเป็น 0\n\n" +
-            "ห้ามพูดในเชิงฟันธงหรืออ้างว่าเป็นคำแนะนำทางการแพทย์ ตอบกระชับ ไม่เกิน 5-6 บรรทัด (ระบบจะต่อท้ายสรุปยอดสะสมให้เอง)\n\n" +
+            "ห้ามพูดในเชิงฟันธงหรืออ้างว่าเป็นคำแนะนำทางการแพทย์ ตอบกระชับ ไม่เกิน 5-6 บรรทัด\n\n" +
             `ข้อมูลวันนี้ก่อนมื้อนี้: ${contextNote}`,
         },
         { role: "user", content: `กินไป: ${foodText}` },
@@ -460,6 +567,12 @@ export async function POST(req: NextRequest) {
 
     for (const event of events) {
       if (event.type === "message" && event.message.type === "text") {
+        const messageId = event.message.id as string;
+
+        if (await isDuplicateMessage(messageId)) {
+          continue;
+        }
+
         const userId = event.source.userId;
         const userText = event.message.text;
         const replyToken = event.replyToken;
@@ -478,6 +591,24 @@ export async function POST(req: NextRequest) {
 
         if (user.onboarding_step !== "completed") {
           await handleOnboarding(userId, user, userText, replyToken);
+          continue;
+        }
+
+        const summaryRequest = detectSummaryRequest(userText);
+        if (summaryRequest) {
+          const days = summaryRequest === "week" ? 7 : 30;
+          const periodLabel = summaryRequest === "week" ? "รายสัปดาห์" : "รายเดือน";
+          const stats = await getPeriodStats(userId, days);
+          const showFertilityMicros = user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ";
+          const summaryText = buildPeriodSummary(
+            periodLabel,
+            days,
+            stats,
+            user.target_calories,
+            user.target_protein_g,
+            showFertilityMicros
+          );
+          await replyMessage(replyToken, summaryText);
           continue;
         }
 
