@@ -21,7 +21,6 @@ function validateSignature(body: string, signature: string) {
 
 async function replyMessage(replyToken: string, text: string, quickReplyOptions?: string[]) {
   const message: Record<string, unknown> = { type: "text", text };
-
   if (quickReplyOptions && quickReplyOptions.length > 0) {
     message.quickReply = {
       items: quickReplyOptions.map((label) => ({
@@ -30,7 +29,6 @@ async function replyMessage(replyToken: string, text: string, quickReplyOptions?
       })),
     };
   }
-
   await fetch("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
     headers: {
@@ -49,14 +47,12 @@ interface UserProfile {
   weight_kg: number | null;
   height_cm: number | null;
   onboarding_step: string;
+  target_calories: number | null;
+  target_protein_g: number | null;
 }
 
 async function getUser(userId: string): Promise<UserProfile | null> {
-  const { data } = await supabase
-    .from("users")
-    .select("*")
-    .eq("user_id", userId)
-    .maybeSingle();
+  const { data } = await supabase.from("users").select("*").eq("user_id", userId).maybeSingle();
   return data;
 }
 
@@ -71,24 +67,53 @@ async function updateUser(userId: string, fields: Partial<UserProfile>) {
 const MALE_GOALS = ["เพิ่มคุณภาพอสุจิ", "เพิ่มกล้าม/พลังงาน", "ลดน้ำหนัก", "สุขภาพทั่วไป"];
 const FEMALE_GOALS = ["เพิ่มกล้าม/พลังงาน", "ลดน้ำหนัก", "สุขภาพทั่วไป"];
 
-async function handleOnboarding(
-  userId: string,
-  user: UserProfile,
-  text: string,
-  replyToken: string
-) {
+// คำนวณ TDEE ด้วยสูตร Mifflin-St Jeor + ปรับตามเป้าหมาย
+function calculateTargets(user: {
+  gender: string;
+  age: number;
+  weight_kg: number;
+  height_cm: number;
+  goal: string;
+}) {
+  const bmr =
+    user.gender === "male"
+      ? 10 * user.weight_kg + 6.25 * user.height_cm - 5 * user.age + 5
+      : 10 * user.weight_kg + 6.25 * user.height_cm - 5 * user.age - 161;
+
+  // สมมติกิจกรรมระดับเบา-ปานกลาง (ยังไม่ได้เก็บข้อมูลระดับออกกำลังกายจริง)
+  const tdee = bmr * 1.375;
+
+  let targetCalories = tdee;
+  let proteinPerKg = 1.4;
+
+  if (user.goal === "ลดน้ำหนัก") {
+    targetCalories = tdee - 500;
+    proteinPerKg = 1.8;
+  } else if (user.goal === "เพิ่มกล้าม/พลังงาน") {
+    targetCalories = tdee + 300;
+    proteinPerKg = 2.0;
+  } else if (user.goal === "เพิ่มคุณภาพอสุจิ") {
+    targetCalories = tdee;
+    proteinPerKg = 1.8;
+  }
+
+  return {
+    targetCalories: Math.round(targetCalories),
+    targetProtein: Math.round(user.weight_kg * proteinPerKg),
+  };
+}
+
+async function handleOnboarding(userId: string, user: UserProfile, text: string, replyToken: string) {
   const t = text.trim();
 
   if (user.onboarding_step === "ask_gender") {
     let gender: string | null = null;
     if (t === "ชาย") gender = "male";
     else if (t === "หญิง") gender = "female";
-
     if (!gender) {
       await replyMessage(replyToken, "เลือกจากปุ่มด้านล่างได้เลยครับ 🙂", ["ชาย", "หญิง"]);
       return;
     }
-
     await updateUser(userId, { gender, onboarding_step: "ask_goal" });
     const goals = gender === "male" ? MALE_GOALS : FEMALE_GOALS;
     await replyMessage(replyToken, "เป้าหมายหลักตอนนี้คืออะไรครับ?", goals);
@@ -101,7 +126,6 @@ async function handleOnboarding(
       await replyMessage(replyToken, "เลือกจากปุ่มด้านล่างได้เลยครับ 🙂", goals);
       return;
     }
-
     await updateUser(userId, { goal: t, onboarding_step: "ask_age" });
     await replyMessage(replyToken, "อายุเท่าไหร่ครับ? (พิมพ์ตัวเลข เช่น 32)");
     return;
@@ -135,26 +159,69 @@ async function handleOnboarding(
       await replyMessage(replyToken, "ขอเป็นตัวเลขส่วนสูงนะครับ เช่น 170");
       return;
     }
-    await updateUser(userId, { height_cm: height, onboarding_step: "completed" });
+
+    const { targetCalories, targetProtein } = calculateTargets({
+      gender: user.gender!,
+      age: user.age!,
+      weight_kg: user.weight_kg!,
+      height_cm: height,
+      goal: user.goal!,
+    });
+
+    await updateUser(userId, {
+      height_cm: height,
+      onboarding_step: "completed",
+      target_calories: targetCalories,
+      target_protein_g: targetProtein,
+    });
+
+    let extraNote = "";
+    if (user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ") {
+      extraNote =
+        "\nสารสำคัญที่ควรได้ครบทุกวัน: สังกะสี ~11mg, ซีลีเนียม ~55mcg (จากอาหารทะเล ถั่ว เมล็ดฟักทอง)";
+    }
+
     await replyMessage(
       replyToken,
-      "เรียบร้อยครับ! 🎉 ตอนนี้กินเป็นรู้จักคุณแล้ว ลองส่งเมนูที่กินมาได้เลย เช่น พิมพ์ 'ข้าวกะเพราหมู' มาดูก่อนก็ได้ครับ"
+      `เรียบร้อยครับ! 🎉\n\nจากข้อมูลของคุณ เป้าหมายพลังงานต่อวันอยู่ที่ประมาณ ${targetCalories} แคล โปรตีนประมาณ ${targetProtein} กรัม${extraNote}\n\n(ค่าประมาณกลางๆ ยังไม่รวมระดับกิจกรรมจริง ใช้เป็นแนวทางได้เลยครับ)\n\nลองส่งเมนูที่กินมาได้เลยครับ`
     );
     return;
   }
 }
 
-async function getTodaySummary(userId: string) {
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+// คำนวณ "เที่ยงคืนของไทย" ให้ถูกต้อง ไม่พึ่ง timezone ของ server
+function getThailandStartOfDayISO(): string {
+  const THAI_OFFSET_MS = 7 * 60 * 60 * 1000;
+  const now = new Date();
+  const thaiNow = new Date(now.getTime() + THAI_OFFSET_MS);
+  const thaiMidnightFields = new Date(
+    Date.UTC(thaiNow.getUTCFullYear(), thaiNow.getUTCMonth(), thaiNow.getUTCDate(), 0, 0, 0)
+  );
+  const actualUTCInstant = new Date(thaiMidnightFields.getTime() - THAI_OFFSET_MS);
+  return actualUTCInstant.toISOString();
+}
+
+interface DailyTotals {
+  calories: number;
+  protein_g: number;
+  carb_g: number;
+  fat_g: number;
+}
+
+async function getTodayTotals(
+  userId: string
+): Promise<{ totals: DailyTotals; foodList: string }> {
+  const startOfDayISO = getThailandStartOfDayISO();
 
   const { data, error } = await supabase
     .from("food_logs")
     .select("food_text, calories, protein_g, carb_g, fat_g")
     .eq("user_id", userId)
-    .gte("created_at", startOfDay.toISOString());
+    .gte("created_at", startOfDayISO);
 
-  if (error || !data || data.length === 0) return null;
+  if (error || !data || data.length === 0) {
+    return { totals: { calories: 0, protein_g: 0, carb_g: 0, fat_g: 0 }, foodList: "" };
+  }
 
   const totals = data.reduce(
     (acc, row) => ({
@@ -167,7 +234,7 @@ async function getTodaySummary(userId: string) {
   );
 
   const foodList = data.map((row) => row.food_text).join(", ");
-  return { totals, foodList, mealCount: data.length };
+  return { totals, foodList };
 }
 
 interface AiResult {
@@ -181,26 +248,28 @@ interface AiResult {
 async function analyzeFoodText(
   foodText: string,
   user: UserProfile,
-  todaySummary: Awaited<ReturnType<typeof getTodaySummary>>
+  previousTotals: DailyTotals,
+  foodListSoFar: string
 ): Promise<AiResult> {
-  const contextNote = todaySummary
-    ? `วันนี้ผู้ใช้กินไปแล้ว ${todaySummary.mealCount} มื้อ: ${todaySummary.foodList} รวมพลังงานประมาณ ${todaySummary.totals.calories} แคล โปรตีนประมาณ ${todaySummary.totals.protein_g} กรัม คาร์บประมาณ ${todaySummary.totals.carb_g} กรัม ไขมันประมาณ ${todaySummary.totals.fat_g} กรัม (ไม่รวมมื้อล่าสุด)`
-    : "วันนี้ยังไม่มีข้อมูลมื้อก่อนหน้า ถือว่าเป็นมื้อแรกของวัน";
+  const contextNote =
+    foodListSoFar.length > 0
+      ? `ก่อนหน้ามื้อนี้ วันนี้กินไปแล้ว: ${foodListSoFar} รวมพลังงานประมาณ ${previousTotals.calories} แคล โปรตีน ${previousTotals.protein_g} กรัม คาร์บ ${previousTotals.carb_g} กรัม ไขมัน ${previousTotals.fat_g} กรัม`
+      : "วันนี้ยังไม่มีข้อมูลมื้อก่อนหน้า ถือว่าเป็นมื้อแรกของวัน";
 
   const profileNote = `ผู้ใช้เพศ${user.gender === "male" ? "ชาย" : "หญิง"} อายุ ${user.age} ปี น้ำหนัก ${user.weight_kg} กก. ส่วนสูง ${user.height_cm} ซม. เป้าหมายหลักคือ "${user.goal}"`;
 
   const fertilityInstruction =
     user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ"
-      ? "ผู้ใช้ตั้งเป้าหมายเรื่องเพิ่มคุณภาพอสุจิ/testosterone โดยเฉพาะ ให้เน้นชี้จุดที่เกี่ยวกับ zinc, selenium, omega-3, antioxidant, vitamin C/E, folate, CoQ10 ในทุกคำตอบ"
+      ? "เน้นชี้จุดที่เกี่ยวกับ zinc, selenium, omega-3, antioxidant, vitamin C/E, folate, CoQ10 ในทุกคำตอบ"
       : user.gender === "male"
-      ? "ถ้าเมนูมีสารอาหารเกี่ยวกับสุขภาพสืบพันธุ์เพศชายชัดเจน พูดถึงสั้นๆ ได้ แต่ไม่ต้องเน้น เพราะไม่ใช่เป้าหมายหลักของผู้ใช้"
-      : "ห้ามพูดเรื่องสุขภาพสืบพันธุ์เพศชายเด็ดขาด เพราะผู้ใช้เป็นเพศหญิง";
+      ? "ถ้าเมนูมีสารอาหารเกี่ยวกับสุขภาพสืบพันธุ์เพศชายชัดเจน พูดถึงสั้นๆ ได้ แต่ไม่ต้องเน้น"
+      : "ห้ามพูดเรื่องสุขภาพสืบพันธุ์เพศชายเด็ดขาด";
 
   const goalInstruction =
     user.goal === "ลดน้ำหนัก"
-      ? "เน้นเตือนถ้าแคล/คาร์บของมื้อนี้ค่อนข้างสูง แนะนำทางเลือกแคลต่ำกว่าในมื้อถัดไป"
+      ? "เน้นเตือนถ้าแคล/คาร์บของมื้อนี้ค่อนข้างสูง"
       : user.goal === "เพิ่มกล้าม/พลังงาน"
-      ? "เน้นเช็คว่าโปรตีนพอไหมสำหรับเป้าหมายนี้ แนะนำเพิ่มโปรตีน/พลังงานถ้าน้อยไป"
+      ? "เน้นเช็คว่าโปรตีนพอไหม"
       : "ให้คำแนะนำสมดุลทั่วไป";
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -218,16 +287,16 @@ async function analyzeFoodText(
           content:
             "คุณคือ 'กินเป็น' ผู้ช่วย AI ด้านโภชนาการที่พูดจาเป็นกันเอง เหมือนเพื่อนที่เข้าใจอาหาร ไม่ใช่หมอหรือนักโภชนาการ\n\n" +
             "ตอบกลับเป็น JSON เท่านั้น:\n" +
-            '{"reply": "ข้อความภาษาไทย กระชับ ไม่เกิน 7-8 บรรทัด", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข}\n\n' +
-            "ตัวเลข 4 ตัวเป็นค่าประมาณของมื้อนี้มื้อเดียว เป็นจำนวนเต็ม ไม่ใช่ช่วง\n\n" +
-            "เมื่อประมาณปริมาณอาหาร ให้สมมติเป็นปริมาณมาตรฐาน 1 หน่วยเสมอ โดยเลือกหน่วยให้เหมาะกับประเภทอาหาร เช่น ข้าวราด/กับข้าว = จาน, ก๋วยเตี๋ยว/ซุป = ชาม, เครื่องดื่ม = แก้ว, ผลไม้ทรงกลม = ลูก, ไข่ = ฟอง, ขนมปัง = แผ่น ถ้าไม่แน่ใจว่าจัดหมวดไหน ให้ใช้คำว่า 'ที่' แทน (เช่น หมูกระทะ 1 ที่) และต้องระบุหน่วยที่สมมตินี้ไว้ในคำตอบเสมอ เช่น 'ข้าวกะเพราหมู (1 จานมาตรฐาน) ประมาณ 600 แคล' เพื่อให้ผู้ใช้รู้ว่าเป็นค่าประมาณจากปริมาณเท่าไหร่ ถ้าผู้ใช้กินมากหรือน้อยกว่ามาตรฐาน ผู้ใช้สามารถบอกเพิ่มเติมเองได้ ไม่ต้องถามกลับ\n\n" +
+            '{"reply": "ข้อความภาษาไทย กระชับ", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข}\n\n' +
+            "ตัวเลข 4 ตัว = ค่าประมาณรวมของทุกเมนูที่กล่าวถึงในข้อความนี้ (ถ้ามีหลายเมนู ให้บวกรวมเป็นตัวเลขเดียว) เป็นจำนวนเต็ม ไม่ใช่ช่วง\n\n" +
+            "เมื่อประมาณปริมาณ ให้สมมติเป็นหน่วยมาตรฐาน (จาน/ชาม/แก้ว/ลูก/ฟอง/แผ่น หรือ 'ที่' ถ้าไม่แน่ใจ) และระบุหน่วยนั้นในคำตอบเสมอ\n\n" +
+            "**ห้ามพูดถึงยอดสะสมรวมทั้งวันในคำตอบเด็ดขาด ห้ามบวกเลขเอง** เพราะระบบจะคำนวณและต่อท้ายให้อัตโนมัติแบบแม่นยำ ให้ 'reply' พูดแค่: ค่าพลังงาน/สารอาหารของมื้อนี้มื้อเดียว, ข้อสังเกตตามเป้าหมาย/fertility, คำแนะนำมื้อถัดไป\n\n" +
             `ข้อมูลผู้ใช้: ${profileNote}\n` +
             `คำแนะนำเรื่อง fertility: ${fertilityInstruction}\n` +
             `คำแนะนำเรื่องเป้าหมาย: ${goalInstruction}\n\n` +
-            "ใน 'reply' ให้ครอบคลุม: ค่าพลังงาน/โปรตีน/คาร์บ/ไขมันของมื้อนี้, ยอดสะสมทั้งวัน, ข้อสังเกตตามเป้าหมาย, คำแนะนำมื้อถัดไป\n\n" +
             "ถ้าผู้ใช้พิมพ์เรื่องอื่นที่ไม่เกี่ยวกับอาหาร ตอบใน 'reply' แบบเพื่อนคุยสั้นๆ แล้วชวนกลับมาเรื่องอาหาร และให้ตัวเลขทั้งหมดเป็น 0\n\n" +
-            "ห้ามพูดในเชิงฟันธงหรืออ้างว่าเป็นคำแนะนำทางการแพทย์\n\n" +
-            `ข้อมูลวันนี้: ${contextNote}`,
+            "ห้ามพูดในเชิงฟันธงหรืออ้างว่าเป็นคำแนะนำทางการแพทย์ ตอบกระชับ ไม่เกิน 5-6 บรรทัด (ระบบจะต่อท้ายสรุปยอดสะสมให้เอง)\n\n" +
+            `ข้อมูลวันนี้ก่อนมื้อนี้: ${contextNote}`,
         },
         { role: "user", content: `กินไป: ${foodText}` },
       ],
@@ -269,6 +338,35 @@ async function saveFoodLog(userId: string, foodText: string, result: AiResult) {
   });
 }
 
+// สร้างข้อความสรุปยอดสะสม "ด้วยโค้ด" ไม่ใช่ให้ AI พูดเอง — จุดสำคัญของการแก้บั๊กวันนี้
+function buildSummaryBlock(
+  mealTotals: AiResult,
+  previousTotals: DailyTotals,
+  targetCalories: number | null,
+  targetProtein: number | null
+): string {
+  const newTotals = {
+    calories: previousTotals.calories + mealTotals.calories,
+    protein_g: previousTotals.protein_g + mealTotals.protein_g,
+    carb_g: previousTotals.carb_g + mealTotals.carb_g,
+    fat_g: previousTotals.fat_g + mealTotals.fat_g,
+  };
+
+  let line = `\n\n📊 ยอดสะสมวันนี้: ${newTotals.calories} แคล`;
+  if (targetCalories) {
+    const remaining = targetCalories - newTotals.calories;
+    line +=
+      remaining >= 0
+        ? ` จาก ${targetCalories} แคล (เหลืออีก ${remaining})`
+        : ` จาก ${targetCalories} แคล (เกินไป ${Math.abs(remaining)})`;
+  }
+  line += `\nโปรตีน ${newTotals.protein_g}g`;
+  if (targetProtein) line += `/${targetProtein}g`;
+  line += ` | คาร์บ ${newTotals.carb_g}g | ไขมัน ${newTotals.fat_g}g`;
+
+  return line;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const rawBody = await req.text();
@@ -304,10 +402,22 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
-        const todaySummary = await getTodaySummary(userId);
-        const result = await analyzeFoodText(userText, user, todaySummary);
-        await replyMessage(replyToken, result.reply);
-        await saveFoodLog(userId, userText, result);
+        const { totals: previousTotals, foodList } = await getTodayTotals(userId);
+        const result = await analyzeFoodText(userText, user, previousTotals, foodList);
+
+        const isFoodMessage =
+          result.calories !== 0 || result.protein_g !== 0 || result.carb_g !== 0 || result.fat_g !== 0;
+
+        const finalReply = isFoodMessage
+          ? result.reply +
+            buildSummaryBlock(result, previousTotals, user.target_calories, user.target_protein_g)
+          : result.reply;
+
+        await replyMessage(replyToken, finalReply);
+
+        if (isFoodMessage) {
+          await saveFoodLog(userId, userText, result);
+        }
       }
     }
 
