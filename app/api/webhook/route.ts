@@ -67,7 +67,14 @@ async function updateUser(userId: string, fields: Partial<UserProfile>) {
 const MALE_GOALS = ["เพิ่มคุณภาพอสุจิ", "เพิ่มกล้าม/พลังงาน", "ลดน้ำหนัก", "สุขภาพทั่วไป"];
 const FEMALE_GOALS = ["เพิ่มกล้าม/พลังงาน", "ลดน้ำหนัก", "สุขภาพทั่วไป"];
 
-// คำนวณ TDEE ด้วยสูตร Mifflin-St Jeor + ปรับตามเป้าหมาย
+const FERTILITY_TARGETS = {
+  zinc_mg: 11,
+  selenium_mcg: 55,
+  omega3_mg: 300,
+  folate_mcg: 400,
+  vitamin_c_mg: 90,
+};
+
 function calculateTargets(user: {
   gender: string;
   age: number;
@@ -80,7 +87,6 @@ function calculateTargets(user: {
       ? 10 * user.weight_kg + 6.25 * user.height_cm - 5 * user.age + 5
       : 10 * user.weight_kg + 6.25 * user.height_cm - 5 * user.age - 161;
 
-  // สมมติกิจกรรมระดับเบา-ปานกลาง (ยังไม่ได้เก็บข้อมูลระดับออกกำลังกายจริง)
   const tdee = bmr * 1.375;
 
   let targetCalories = tdee;
@@ -177,8 +183,7 @@ async function handleOnboarding(userId: string, user: UserProfile, text: string,
 
     let extraNote = "";
     if (user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ") {
-      extraNote =
-        "\nสารสำคัญที่ควรได้ครบทุกวัน: สังกะสี ~11mg, ซีลีเนียม ~55mcg (จากอาหารทะเล ถั่ว เมล็ดฟักทอง)";
+      extraNote = `\nสารสำคัญที่ควรได้ครบทุกวัน: สังกะสี ~${FERTILITY_TARGETS.zinc_mg}mg, ซีลีเนียม ~${FERTILITY_TARGETS.selenium_mcg}mcg, โฟเลต ~${FERTILITY_TARGETS.folate_mcg}mcg, วิตามินซี ~${FERTILITY_TARGETS.vitamin_c_mg}mg, โอเมก้า-3 ~${FERTILITY_TARGETS.omega3_mg}mg`;
     }
 
     await replyMessage(
@@ -189,7 +194,6 @@ async function handleOnboarding(userId: string, user: UserProfile, text: string,
   }
 }
 
-// คำนวณ "เที่ยงคืนของไทย" ให้ถูกต้อง ไม่พึ่ง timezone ของ server
 function getThailandStartOfDayISO(): string {
   const THAI_OFFSET_MS = 7 * 60 * 60 * 1000;
   const now = new Date();
@@ -206,7 +210,24 @@ interface DailyTotals {
   protein_g: number;
   carb_g: number;
   fat_g: number;
+  zinc_mg: number;
+  selenium_mcg: number;
+  omega3_mg: number;
+  folate_mcg: number;
+  vitamin_c_mg: number;
 }
+
+const EMPTY_TOTALS: DailyTotals = {
+  calories: 0,
+  protein_g: 0,
+  carb_g: 0,
+  fat_g: 0,
+  zinc_mg: 0,
+  selenium_mcg: 0,
+  omega3_mg: 0,
+  folate_mcg: 0,
+  vitamin_c_mg: 0,
+};
 
 async function getTodayTotals(
   userId: string
@@ -215,12 +236,14 @@ async function getTodayTotals(
 
   const { data, error } = await supabase
     .from("food_logs")
-    .select("food_text, calories, protein_g, carb_g, fat_g")
+    .select(
+      "food_text, calories, protein_g, carb_g, fat_g, zinc_mg, selenium_mcg, omega3_mg, folate_mcg, vitamin_c_mg"
+    )
     .eq("user_id", userId)
     .gte("created_at", startOfDayISO);
 
   if (error || !data || data.length === 0) {
-    return { totals: { calories: 0, protein_g: 0, carb_g: 0, fat_g: 0 }, foodList: "" };
+    return { totals: { ...EMPTY_TOTALS }, foodList: "" };
   }
 
   const totals = data.reduce(
@@ -229,8 +252,13 @@ async function getTodayTotals(
       protein_g: acc.protein_g + (row.protein_g || 0),
       carb_g: acc.carb_g + (row.carb_g || 0),
       fat_g: acc.fat_g + (row.fat_g || 0),
+      zinc_mg: acc.zinc_mg + (row.zinc_mg || 0),
+      selenium_mcg: acc.selenium_mcg + (row.selenium_mcg || 0),
+      omega3_mg: acc.omega3_mg + (row.omega3_mg || 0),
+      folate_mcg: acc.folate_mcg + (row.folate_mcg || 0),
+      vitamin_c_mg: acc.vitamin_c_mg + (row.vitamin_c_mg || 0),
     }),
-    { calories: 0, protein_g: 0, carb_g: 0, fat_g: 0 }
+    { ...EMPTY_TOTALS }
   );
 
   const foodList = data.map((row) => row.food_text).join(", ");
@@ -243,6 +271,11 @@ interface AiResult {
   protein_g: number;
   carb_g: number;
   fat_g: number;
+  zinc_mg: number;
+  selenium_mcg: number;
+  omega3_mg: number;
+  folate_mcg: number;
+  vitamin_c_mg: number;
 }
 
 async function analyzeFoodText(
@@ -253,14 +286,14 @@ async function analyzeFoodText(
 ): Promise<AiResult> {
   const contextNote =
     foodListSoFar.length > 0
-      ? `ก่อนหน้ามื้อนี้ วันนี้กินไปแล้ว: ${foodListSoFar} รวมพลังงานประมาณ ${previousTotals.calories} แคล โปรตีน ${previousTotals.protein_g} กรัม คาร์บ ${previousTotals.carb_g} กรัม ไขมัน ${previousTotals.fat_g} กรัม`
+      ? `ก่อนหน้ามื้อนี้ วันนี้กินไปแล้ว: ${foodListSoFar} รวมพลังงานประมาณ ${previousTotals.calories} แคล โปรตีน ${previousTotals.protein_g} กรัม`
       : "วันนี้ยังไม่มีข้อมูลมื้อก่อนหน้า ถือว่าเป็นมื้อแรกของวัน";
 
   const profileNote = `ผู้ใช้เพศ${user.gender === "male" ? "ชาย" : "หญิง"} อายุ ${user.age} ปี น้ำหนัก ${user.weight_kg} กก. ส่วนสูง ${user.height_cm} ซม. เป้าหมายหลักคือ "${user.goal}"`;
 
   const fertilityInstruction =
     user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ"
-      ? "เน้นชี้จุดที่เกี่ยวกับ zinc, selenium, omega-3, antioxidant, vitamin C/E, folate, CoQ10 ในทุกคำตอบ"
+      ? "เน้นชี้จุดที่เกี่ยวกับ zinc, selenium, omega-3, folate, vitamin C ในทุกคำตอบ"
       : user.gender === "male"
       ? "ถ้าเมนูมีสารอาหารเกี่ยวกับสุขภาพสืบพันธุ์เพศชายชัดเจน พูดถึงสั้นๆ ได้ แต่ไม่ต้องเน้น"
       : "ห้ามพูดเรื่องสุขภาพสืบพันธุ์เพศชายเด็ดขาด";
@@ -286,11 +319,17 @@ async function analyzeFoodText(
           role: "system",
           content:
             "คุณคือ 'กินเป็น' ผู้ช่วย AI ด้านโภชนาการที่พูดจาเป็นกันเอง เหมือนเพื่อนที่เข้าใจอาหาร ไม่ใช่หมอหรือนักโภชนาการ\n\n" +
-            "ตอบกลับเป็น JSON เท่านั้น:\n" +
-            '{"reply": "ข้อความภาษาไทย กระชับ", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข}\n\n' +
-            "ตัวเลข 4 ตัว = ค่าประมาณรวมของทุกเมนูที่กล่าวถึงในข้อความนี้ (ถ้ามีหลายเมนู ให้บวกรวมเป็นตัวเลขเดียว) เป็นจำนวนเต็ม ไม่ใช่ช่วง\n\n" +
-            "เมื่อประมาณปริมาณ ให้สมมติเป็นหน่วยมาตรฐาน (จาน/ชาม/แก้ว/ลูก/ฟอง/แผ่น หรือ 'ที่' ถ้าไม่แน่ใจ) และระบุหน่วยนั้นในคำตอบเสมอ\n\n" +
-            "**ห้ามพูดถึงยอดสะสมรวมทั้งวันในคำตอบเด็ดขาด ห้ามบวกเลขเอง** เพราะระบบจะคำนวณและต่อท้ายให้อัตโนมัติแบบแม่นยำ ให้ 'reply' พูดแค่: ค่าพลังงาน/สารอาหารของมื้อนี้มื้อเดียว, ข้อสังเกตตามเป้าหมาย/fertility, คำแนะนำมื้อถัดไป\n\n" +
+            "ตอบกลับเป็น JSON เท่านั้น ตามโครงสร้างนี้:\n" +
+            '{"reply": "ข้อความภาษาไทย กระชับ", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข, "zinc_mg": ตัวเลข, "selenium_mcg": ตัวเลข, "omega3_mg": ตัวเลข, "folate_mcg": ตัวเลข, "vitamin_c_mg": ตัวเลข}\n\n' +
+            "ตัวเลขทั้งหมด = ค่าประมาณรวมของทุกเมนูที่กล่าวถึงในข้อความนี้ เป็นจำนวนเต็ม ไม่ใช่ช่วง ถ้าเมนูไม่มีสารอาหารตัวนั้นเลยให้ใส่ 0\n\n" +
+            "แนวทางประมาณสารอาหารสำคัญ (คร่าวๆ พอ ไม่ต้องแม่นระดับห้องแล็บ):\n" +
+            "- zinc_mg: สูงในหอยนางรม เนื้อแดง ไข่ ถั่ว เมล็ดฟักทอง\n" +
+            "- selenium_mcg: สูงในอาหารทะเล ไข่ เครื่องใน ธัญพืชไม่ขัดสี\n" +
+            "- omega3_mg: สูงในปลาทะเลน้ำลึก (แซลมอน ทูน่า ปลาซาบะ) วอลนัท เมล็ดแฟลกซ์\n" +
+            "- folate_mcg: สูงในผักใบเขียวเข้ม ถั่ว ตับ\n" +
+            "- vitamin_c_mg: สูงในผลไม้รสเปรี้ยว ฝรั่ง พริกหวาน มะละกอ\n\n" +
+            "เมื่อประมาณปริมาณอาหาร ให้สมมติเป็นปริมาณมาตรฐาน 1 หน่วยเสมอ โดยเลือกหน่วยให้เหมาะกับประเภทอาหาร (จาน/ชาม/แก้ว/ลูก/ฟอง/แผ่น หรือ 'ที่' ถ้าไม่แน่ใจ) และระบุหน่วยนั้นในคำตอบเสมอ\n\n" +
+            "**ห้ามพูดถึงยอดสะสมรวมทั้งวันในคำตอบเด็ดขาด ห้ามบวกเลขเอง** ระบบจะคำนวณและต่อท้ายให้อัตโนมัติ ให้ 'reply' พูดแค่: ค่าพลังงาน/สารอาหารเด่นของมื้อนี้มื้อเดียว, ข้อสังเกตตามเป้าหมาย, คำแนะนำมื้อถัดไป\n\n" +
             `ข้อมูลผู้ใช้: ${profileNote}\n` +
             `คำแนะนำเรื่อง fertility: ${fertilityInstruction}\n` +
             `คำแนะนำเรื่องเป้าหมาย: ${goalInstruction}\n\n` +
@@ -314,6 +353,11 @@ async function analyzeFoodText(
       protein_g: Number(parsed.protein_g) || 0,
       carb_g: Number(parsed.carb_g) || 0,
       fat_g: Number(parsed.fat_g) || 0,
+      zinc_mg: Number(parsed.zinc_mg) || 0,
+      selenium_mcg: Number(parsed.selenium_mcg) || 0,
+      omega3_mg: Number(parsed.omega3_mg) || 0,
+      folate_mcg: Number(parsed.folate_mcg) || 0,
+      vitamin_c_mg: Number(parsed.vitamin_c_mg) || 0,
     };
   } catch {
     return {
@@ -322,6 +366,11 @@ async function analyzeFoodText(
       protein_g: 0,
       carb_g: 0,
       fat_g: 0,
+      zinc_mg: 0,
+      selenium_mcg: 0,
+      omega3_mg: 0,
+      folate_mcg: 0,
+      vitamin_c_mg: 0,
     };
   }
 }
@@ -334,22 +383,32 @@ async function saveFoodLog(userId: string, foodText: string, result: AiResult) {
     protein_g: result.protein_g,
     carb_g: result.carb_g,
     fat_g: result.fat_g,
+    zinc_mg: result.zinc_mg,
+    selenium_mcg: result.selenium_mcg,
+    omega3_mg: result.omega3_mg,
+    folate_mcg: result.folate_mcg,
+    vitamin_c_mg: result.vitamin_c_mg,
     ai_response: result.reply,
   });
 }
 
-// สร้างข้อความสรุปยอดสะสม "ด้วยโค้ด" ไม่ใช่ให้ AI พูดเอง — จุดสำคัญของการแก้บั๊กวันนี้
 function buildSummaryBlock(
   mealTotals: AiResult,
   previousTotals: DailyTotals,
   targetCalories: number | null,
-  targetProtein: number | null
+  targetProtein: number | null,
+  showFertilityMicros: boolean
 ): string {
-  const newTotals = {
+  const newTotals: DailyTotals = {
     calories: previousTotals.calories + mealTotals.calories,
     protein_g: previousTotals.protein_g + mealTotals.protein_g,
     carb_g: previousTotals.carb_g + mealTotals.carb_g,
     fat_g: previousTotals.fat_g + mealTotals.fat_g,
+    zinc_mg: previousTotals.zinc_mg + mealTotals.zinc_mg,
+    selenium_mcg: previousTotals.selenium_mcg + mealTotals.selenium_mcg,
+    omega3_mg: previousTotals.omega3_mg + mealTotals.omega3_mg,
+    folate_mcg: previousTotals.folate_mcg + mealTotals.folate_mcg,
+    vitamin_c_mg: previousTotals.vitamin_c_mg + mealTotals.vitamin_c_mg,
   };
 
   let line = `\n\n📊 ยอดสะสมวันนี้: ${newTotals.calories} แคล`;
@@ -363,6 +422,11 @@ function buildSummaryBlock(
   line += `\nโปรตีน ${newTotals.protein_g}g`;
   if (targetProtein) line += `/${targetProtein}g`;
   line += ` | คาร์บ ${newTotals.carb_g}g | ไขมัน ${newTotals.fat_g}g`;
+
+  if (showFertilityMicros) {
+    line += `\n🎯 Zinc ${newTotals.zinc_mg}/${FERTILITY_TARGETS.zinc_mg}mg | Selenium ${newTotals.selenium_mcg}/${FERTILITY_TARGETS.selenium_mcg}mcg`;
+    line += `\nOmega-3 ${newTotals.omega3_mg}/${FERTILITY_TARGETS.omega3_mg}mg | Folate ${newTotals.folate_mcg}/${FERTILITY_TARGETS.folate_mcg}mcg | Vit C ${newTotals.vitamin_c_mg}/${FERTILITY_TARGETS.vitamin_c_mg}mg`;
+  }
 
   return line;
 }
@@ -408,9 +472,11 @@ export async function POST(req: NextRequest) {
         const isFoodMessage =
           result.calories !== 0 || result.protein_g !== 0 || result.carb_g !== 0 || result.fat_g !== 0;
 
+        const showFertilityMicros = user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ";
+
         const finalReply = isFoodMessage
           ? result.reply +
-            buildSummaryBlock(result, previousTotals, user.target_calories, user.target_protein_g)
+            buildSummaryBlock(result, previousTotals, user.target_calories, user.target_protein_g, showFertilityMicros)
           : result.reply;
 
         await replyMessage(replyToken, finalReply);
