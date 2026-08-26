@@ -411,24 +411,35 @@ function buildSummaryBlock(
     vitamin_c_mg: previousTotals.vitamin_c_mg + mealTotals.vitamin_c_mg,
   };
 
-  let line = `\n\n📊 ยอดสะสมวันนี้: ${newTotals.calories} แคล`;
-  if (targetCalories) {
-    const remaining = targetCalories - newTotals.calories;
-    line +=
-      remaining >= 0
-        ? ` จาก ${targetCalories} แคล (เหลืออีก ${remaining})`
-        : ` จาก ${targetCalories} แคล (เกินไป ${Math.abs(remaining)})`;
-  }
-  line += `\nโปรตีน ${newTotals.protein_g}g`;
-  if (targetProtein) line += `/${targetProtein}g`;
-  line += ` | คาร์บ ${newTotals.carb_g}g | ไขมัน ${newTotals.fat_g}g`;
+  const caloriesLine = targetCalories
+    ? (() => {
+        const remaining = targetCalories - newTotals.calories;
+        return remaining >= 0
+          ? `แคล: ${newTotals.calories}/${targetCalories} (เหลืออีก ${remaining})`
+          : `แคล: ${newTotals.calories}/${targetCalories} (เกินไป ${Math.abs(remaining)})`;
+      })()
+    : `แคล: ${newTotals.calories}`;
+
+  const proteinLine = targetProtein
+    ? `โปรตีน: ${newTotals.protein_g}/${targetProtein}g`
+    : `โปรตีน: ${newTotals.protein_g}g`;
+
+  let block = `\n\n📊 ยอดสะสมวันนี้`;
+  block += `\n${caloriesLine}`;
+  block += `\n${proteinLine}`;
+  block += `\nคาร์บ: ${newTotals.carb_g}g`;
+  block += `\nไขมัน: ${newTotals.fat_g}g`;
 
   if (showFertilityMicros) {
-    line += `\n🎯 Zinc ${newTotals.zinc_mg}/${FERTILITY_TARGETS.zinc_mg}mg | Selenium ${newTotals.selenium_mcg}/${FERTILITY_TARGETS.selenium_mcg}mcg`;
-    line += `\nOmega-3 ${newTotals.omega3_mg}/${FERTILITY_TARGETS.omega3_mg}mg | Folate ${newTotals.folate_mcg}/${FERTILITY_TARGETS.folate_mcg}mcg | Vit C ${newTotals.vitamin_c_mg}/${FERTILITY_TARGETS.vitamin_c_mg}mg`;
+    block += `\n\n🎯 สารอาหารเพื่ออสุจิ`;
+    block += `\nZinc: ${newTotals.zinc_mg}/${FERTILITY_TARGETS.zinc_mg}mg`;
+    block += `\nSelenium: ${newTotals.selenium_mcg}/${FERTILITY_TARGETS.selenium_mcg}mcg`;
+    block += `\nOmega-3: ${newTotals.omega3_mg}/${FERTILITY_TARGETS.omega3_mg}mg`;
+    block += `\nFolate: ${newTotals.folate_mcg}/${FERTILITY_TARGETS.folate_mcg}mcg`;
+    block += `\nVit C: ${newTotals.vitamin_c_mg}/${FERTILITY_TARGETS.vitamin_c_mg}mg`;
   }
 
-  return line;
+  return block;
 }
 
 export async function POST(req: NextRequest) {
