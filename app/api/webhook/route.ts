@@ -39,13 +39,12 @@ async function replyMessage(replyToken: string, text: string, quickReplyOptions?
   });
 }
 
-// ป้องกัน LINE webhook ส่งซ้ำ — ใช้ unique constraint ของ DB เช็คแบบ atomic
 async function isDuplicateMessage(messageId: string): Promise<boolean> {
   const { error } = await supabase.from("processed_messages").insert({ message_id: messageId });
   if (error) {
-    if (error.code === "23505") return true; // unique_violation = เคยประมวลผลไปแล้ว
+    if (error.code === "23505") return true;
     console.error("dedup check error:", error);
-    return false; // error อื่นที่ไม่ใช่ duplicate ให้ประมวลผลต่อไป ดีกว่าทำข้อความหาย
+    return false;
   }
   return false;
 }
@@ -279,7 +278,6 @@ async function getTodayTotals(
   return { totals, foodList };
 }
 
-// ตรวจจับคำสั่งขอสรุปย้อนหลัง
 function detectSummaryRequest(text: string): "week" | "month" | null {
   const t = text.trim();
   if (!/สรุป/.test(t)) return null;
@@ -438,16 +436,17 @@ async function analyzeFoodText(
             "- omega3_mg: สูงในปลาทะเลน้ำลึก (แซลมอน ทูน่า ปลาซาบะ) วอลนัท เมล็ดแฟลกซ์\n" +
             "- folate_mcg: สูงในผักใบเขียวเข้ม ถั่ว ตับ\n" +
             "- vitamin_c_mg: สูงในผลไม้รสเปรี้ยว ฝรั่ง พริกหวาน มะละกอ\n\n" +
-            "เมื่อประมาณปริมาณอาหาร ให้สมมติเป็นปริมาณมาตรฐาน 1 หน่วย (จาน/ชาม/แก้ว/ลูก/ฟอง/แผ่น/ที่) เว้นแต่ผู้ใช้ระบุปริมาณต่างจากมาตรฐานเอง (เช่น ครึ่งซอง กินไม่หมด 2 จาน) ให้ปรับตัวเลขตามนั้น และระบุปริมาณที่ใช้ในคำตอบเสมอ\n\n" +
+            "เมื่อประมาณปริมาณอาหาร ให้สมมติเป็นปริมาณมาตรฐาน 1 หน่วย (จาน/ชาม/แก้ว/ลูก/ฟอง/แผ่น/ที่) เว้นแต่ผู้ใช้ระบุปริมาณต่างจากมาตรฐานเอง ให้ปรับตัวเลขตามนั้น และระบุปริมาณที่ใช้ในคำตอบเสมอ\n\n" +
             "ใน 'reply' ต้องมีครบทุกข้อนี้เสมอ ห้ามข้าม:\n" +
-            "1. ชื่อเมนู + ปริมาณที่สมมติ/ที่ผู้ใช้ระบุ + ค่าพลังงานโดยประมาณเป็นตัวเลขชัดเจน พร้อมโปรตีนโดยประมาณเป็นตัวเลข ห้ามพูดลอยๆ โดยไม่มีตัวเลขเด็ดขาด\n" +
+            "1. ชื่อเมนู + ปริมาณ + ค่าพลังงานโดยประมาณเป็นตัวเลขชัดเจน พร้อมโปรตีนโดยประมาณเป็นตัวเลข ห้ามพูดลอยๆ โดยไม่มีตัวเลขเด็ดขาด\n" +
             "2. ข้อสังเกตตามเป้าหมาย/fertility ของมื้อนี้\n" +
             "3. คำแนะนำมื้อถัดไปสั้นๆ\n\n" +
-            "**ห้ามพูดถึงยอดสะสมรวมทั้งวันในคำตอบเด็ดขาด ห้ามบวกเลขสะสมเอง** ระบบจะคำนวณยอดสะสมและต่อท้ายให้อัตโนมัติแยกต่างหาก\n\n" +
+            "**ห้ามพูดถึงยอดสะสมรวมทั้งวันในคำตอบเด็ดขาด ห้ามบวกเลขสะสมเอง**\n\n" +
             `ข้อมูลผู้ใช้: ${profileNote}\n` +
             `คำแนะนำเรื่อง fertility: ${fertilityInstruction}\n` +
             `คำแนะนำเรื่องเป้าหมาย: ${goalInstruction}\n\n` +
-            "ถ้าผู้ใช้พิมพ์เรื่องอื่นที่ไม่เกี่ยวกับอาหาร ตอบใน 'reply' แบบเพื่อนคุยเป็นธรรมชาติ ไม่ต้องรีบชวนกลับมาเรื่องอาหารทุกครั้ง คุยตามบริบทไปได้เลยสั้นๆ แต่ถ้าเรื่องนั้นซับซ้อน ต้องใช้ความรู้เฉพาะทางลึก หรือยาวเกินคำตอบสั้นๆ ให้บอกตรงๆ ว่าเรื่องนี้แนะนำให้ลองถามผู้เชี่ยวชาญหรือ ChatGPT ดูดีกว่า เพราะกินเป็นถนัดเรื่องอาหารและโภชนาการเป็นหลัก และให้ตัวเลขทั้งหมดเป็น 0\n\n" +
+            "ถ้าผู้ใช้พิมพ์เรื่องอื่นที่ไม่เกี่ยวกับอาหาร ตอบใน 'reply' แบบเพื่อนคุยเป็นธรรมชาติ ไม่ต้องรีบชวนกลับมาเรื่องอาหารทุกครั้ง แต่ถ้าเรื่องนั้นซับซ้อน ต้องใช้ความรู้เฉพาะทางลึก (เช่น เขียนโค้ด, กฎหมาย, การเงิน) ให้บอกตรงๆ ว่าแนะนำให้ลองถามผู้เชี่ยวชาญหรือ ChatGPT ดูดีกว่า และให้ตัวเลขทั้งหมดเป็น 0\n\n" +
+            "**กฎเหล็กที่ห้ามฝ่าฝืนเด็ดขาด:** ค่าตัวเลข calories/protein_g/carb_g/fat_g/zinc_mg/selenium_mcg/omega3_mg/folate_mcg/vitamin_c_mg เป็นข้อมูลภายในสำหรับระบบเท่านั้น ห้ามพูดถึงตัวเลขเหล่านี้ ห้ามพูดคำว่า 'ค่า' 'เป็น 0' 'ตัวแปร' หรืออ้างอิงถึงมันในข้อความ 'reply' เด็ดขาด และห้ามพูดถึงข้อความ 'กินไป:' ที่เป็นรูปแบบภายในที่ระบบใช้ส่งข้อมูลให้คุณ\n\n" +
             "ห้ามพูดในเชิงฟันธงหรืออ้างว่าเป็นคำแนะนำทางการแพทย์ ตอบกระชับ ไม่เกิน 5-6 บรรทัด\n\n" +
             `ข้อมูลวันนี้ก่อนมื้อนี้: ${contextNote}`,
         },
@@ -568,7 +567,7 @@ export async function POST(req: NextRequest) {
     const json = JSON.parse(rawBody);
     const events = json.events || [];
 
-        for (const event of events) {
+    for (const event of events) {
       if (event.type === "follow") {
         const userId = event.source.userId;
         const replyToken = event.replyToken;
@@ -596,29 +595,6 @@ export async function POST(req: NextRequest) {
         if (!user) {
           await createUser(userId);
           await replyMessage(replyToken, WELCOME_TEXT, ["ชาย", "หญิง"]);
-          continue;
-        }
-        for (const event of events) {
-      if (event.type === "message" && event.message.type === "text") {
-        const messageId = event.message.id as string;
-
-        if (await isDuplicateMessage(messageId)) {
-          continue;
-        }
-
-        const userId = event.source.userId;
-        const userText = event.message.text;
-        const replyToken = event.replyToken;
-
-        const user = await getUser(userId);
-
-        if (!user) {
-          await createUser(userId);
-          await replyMessage(
-            replyToken,
-            "สวัสดีครับ ผมกินเป็น 🙂\nก่อนเริ่ม ขอถามข้อมูลนิดหน่อยเพื่อแนะนำได้ตรงจุดนะครับ\n\nคุณเป็นเพศอะไรครับ?",
-            ["ชาย", "หญิง"]
-          );
           continue;
         }
 
