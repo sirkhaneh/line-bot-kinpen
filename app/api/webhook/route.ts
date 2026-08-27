@@ -142,7 +142,7 @@ async function undoMeals(userId: string, rawTarget: string | null): Promise<stri
 
   const { data, error } = await supabase
     .from("food_logs")
-    .select("id, food_text")
+    .select("id, food_text, calories")
     .eq("user_id", userId)
     .gte("created_at", startOfDayISO)
     .order("created_at", { ascending: false });
