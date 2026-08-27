@@ -85,9 +85,10 @@ const HELP_TEXT =
   "🍽️ บอกว่ากินอะไร — พิมพ์ชื่อเมนูตรงๆ เช่น 'ข้าวกะเพราหมู' ผมจะประมาณแคลอรี่และสารอาหารให้ พร้อมจำสะสมไว้ทั้งวัน\n\n" +
   "💬 ปรึกษาเรื่องอาหาร — ถามได้เลย เช่น 'วันนี้กินอะไรดี' 'ไก่ย่างดีไหม' 'มีอะไรถูกๆ ดีๆ แนะนำไหม'\n\n" +
   "📊 ดูสรุปยอด — พิมพ์ 'สรุปยอดวันนี้' 'สรุปรายอาทิตย์' หรือ 'สรุปเดือนนี้'\n\n" +
+  "🗑️ ลบมื้อล่าสุด — พิมพ์ 'ยังไม่ได้กิน' ถ้าผมเข้าใจผิด\n\n" +
   "🗣️ คุยเล่นได้ — ผมคุยเรื่องทั่วไปได้บ้าง แต่ถนัดเรื่องอาหาร/สุขภาพเป็นหลัก\n\n" +
   "พิมพ์ 'help' เมื่อไหร่ก็เรียกดูอันนี้ได้อีกครับ";
-  
+
 function isHelpRequest(text: string): boolean {
   const t = text.trim().toLowerCase();
   const helpPhrases = ["help", "ช่วยเหลือ", "คำสั่ง", "วิธีใช้", "วิธีใช้งาน", "สอนใช้งาน", "ใช้ยังไง"];
@@ -533,13 +534,13 @@ async function analyzeFoodText(
           role: "system",
           content:
             "คุณคือ 'กินเป็น' ผู้ช่วย AI ด้านโภชนาการที่พูดจาเป็นกันเอง เหมือนเพื่อนที่เข้าใจอาหาร ไม่ใช่หมอหรือนักโภชนาการ\n\n" +
-            "คุณมีบทสนทนาล่าสุด (ถ้ามี) ส่งมาก่อนข้อความปัจจุบัน ใช้บริบทนั้นประกอบการตอบด้วย เช่น ถ้าผู้ใช้ถามต่อจากที่คุยไว้ก่อนหน้า ให้เข้าใจว่ากำลังพูดถึงอะไรจริง อย่าเดามั่ว\n\n" +
+            "คุณมีบทสนทนาล่าสุด (ถ้ามี) ส่งมาก่อนข้อความปัจจุบัน ใช้บริบทนั้นประกอบการตอบด้วย\n\n" +
             "ตอบกลับเป็น JSON เท่านั้น:\n" +
             '{"reply": "ข้อความภาษาไทย", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข, "zinc_mg": ตัวเลข, "selenium_mcg": ตัวเลข, "omega3_mg": ตัวเลข, "folate_mcg": ตัวเลข, "vitamin_c_mg": ตัวเลข}\n\n' +
             "ผู้ใช้พิมพ์มาได้หลายแบบ แยกแยะและตอบตามนี้:\n\n" +
-            "แบบที่ 1 — รายงานว่ากินอะไรไปแล้ว/กำลังกิน: ประมาณค่าพลังงาน/สารอาหารเป็นตัวเลขจริง ปรับตามปริมาณจริงที่บอก (ครึ่งซอง, กินไม่หมด) สมมติหน่วยมาตรฐานถ้าไม่ระบุ (จาน/ชาม/แก้ว/ลูก/ฟอง/แผ่น/ที่) ใน reply ต้องมี: ชื่อเมนู+ปริมาณ+ค่าพลังงานตัวเลขชัดเจนพร้อมโปรตีน, ข้อสังเกตตามเป้าหมาย, คำแนะนำมื้อถัดไปสั้นๆ ห้ามพูดยอดสะสมรวมทั้งวันหรือบวกเลขเอง (ระบบต่อท้ายอัตโนมัติ)\n\n" +
-            "แบบที่ 2 — ขอคำแนะนำ/ปรึกษาเรื่องอาหาร (ยังไม่ได้กิน) เช่น 'วันนี้กินอะไรดี' 'ไก่ย่างดีไหม' 'มีอาหารไทยถูกๆ ดีๆ แนะนำไหม': ตอบแบบเพื่อนที่รู้เรื่องอาหารจริงๆ แนะนำเมนูไทยจริงหาซื้อง่ายราคาไม่แพง คุยธรรมชาติ ลึก/ยาวเท่าที่จำเป็น ไม่ต้องรีบสรุป อ้างอิงสิ่งที่กินวันนี้แบบกว้างๆ เชิงคุณภาพเท่านั้น (เช่น 'วันนี้ยังขาดโปรตีนอยู่พอสมควร' ห้ามบอกตัวเลขแม่นๆ) **สำคัญมาก: เมนูที่คุณแนะนำในหมวดนี้ยังไม่ถูกกินจริง ห้ามคำนวณหรือใส่ตัวเลขแคล/สารอาหารของเมนูที่แนะนำเด็ดขาด ให้ตัวเลขทั้งหมดเป็น 0 เสมอไม่ว่าจะพูดถึงอาหารกี่อย่างในคำตอบ**\n\n" +
-            "แบบที่ 3 — เรื่องทั่วไปไม่เกี่ยวอาหาร/สุขภาพเลย: คุยธรรมชาติสั้นๆ แบบเพื่อน ห้ามใช้ประโยคจำเจแบบ 'มีอะไรอยากคุยไหม' ห้ามแปะคำแนะนำอาหาร/สุขภาพท้ายทุกประโยคแบบบังคับ พูดเรื่องอาหารเฉพาะเข้ากับบริบทจริงๆ ถ้าซับซ้อนต้องใช้ความรู้เฉพาะทางลึก (โค้ด, กฎหมาย, การเงิน) บอกตรงๆ ว่าแนะนำให้ถามผู้เชี่ยวชาญหรือ ChatGPT ดีกว่า ให้ตัวเลขทั้งหมดเป็น 0\n\n" +
+            "แบบที่ 1 — รายงานว่ากินอะไรไปแล้ว/กำลังกิน: ประมาณค่าพลังงาน/สารอาหารเป็นตัวเลขจริง ปรับตามปริมาณจริงที่บอก สมมติหน่วยมาตรฐานถ้าไม่ระบุ ใน reply ต้องมี: ชื่อเมนู+ปริมาณ+ค่าพลังงานตัวเลขชัดเจนพร้อมโปรตีน, ข้อสังเกตตามเป้าหมาย, คำแนะนำมื้อถัดไปสั้นๆ ห้ามพูดยอดสะสมรวมทั้งวันหรือบวกเลขเอง\n\n" +
+            "แบบที่ 2 — ขอคำแนะนำ/ปรึกษาเรื่องอาหาร (ยังไม่ได้กิน): ตอบแบบเพื่อนที่รู้เรื่องอาหารจริงๆ แนะนำเมนูไทยจริงหาซื้อง่ายราคาไม่แพง คุยธรรมชาติ ไม่ต้องรีบสรุป **ห้ามคำนวณหรือใส่ตัวเลขแคล/สารอาหารของเมนูที่แนะนำเด็ดขาด ให้ตัวเลขทั้งหมดเป็น 0**\n\n" +
+            "แบบที่ 3 — เรื่องทั่วไปไม่เกี่ยวอาหาร/สุขภาพเลย: คุยธรรมชาติสั้นๆ ห้ามใช้ประโยคจำเจแบบ 'มีอะไรอยากคุยไหม' ห้ามแปะคำแนะนำอาหารท้ายทุกประโยคแบบบังคับ ถ้าซับซ้อนต้องใช้ความรู้เฉพาะทางลึก บอกตรงๆ ว่าแนะนำให้ถามผู้เชี่ยวชาญหรือ ChatGPT ดีกว่า ให้ตัวเลขทั้งหมดเป็น 0\n\n" +
             `ข้อมูลผู้ใช้: ${profileNote}\n` +
             `คำแนะนำเรื่อง fertility: ${fertilityInstruction}\n` +
             `คำแนะนำเรื่องเป้าหมาย: ${goalInstruction}\n\n` +
@@ -558,17 +559,18 @@ async function analyzeFoodText(
 
   try {
     const parsed = JSON.parse(content);
+    const round1 = (n: number) => Math.round(n * 10) / 10;
     return {
       reply: parsed.reply || "ขอโทษครับ วิเคราะห์ไม่สำเร็จ ลองส่งใหม่อีกครั้งนะครับ",
-      calories: Number(parsed.calories) || 0,
-      protein_g: Number(parsed.protein_g) || 0,
-      carb_g: Number(parsed.carb_g) || 0,
-      fat_g: Number(parsed.fat_g) || 0,
-      zinc_mg: Number(parsed.zinc_mg) || 0,
-      selenium_mcg: Number(parsed.selenium_mcg) || 0,
-      omega3_mg: Number(parsed.omega3_mg) || 0,
-      folate_mcg: Number(parsed.folate_mcg) || 0,
-      vitamin_c_mg: Number(parsed.vitamin_c_mg) || 0,
+      calories: Math.round(Number(parsed.calories)) || 0,
+      protein_g: Math.round(Number(parsed.protein_g)) || 0,
+      carb_g: Math.round(Number(parsed.carb_g)) || 0,
+      fat_g: Math.round(Number(parsed.fat_g)) || 0,
+      zinc_mg: round1(Number(parsed.zinc_mg)) || 0,
+      selenium_mcg: round1(Number(parsed.selenium_mcg)) || 0,
+      omega3_mg: round1(Number(parsed.omega3_mg)) || 0,
+      folate_mcg: round1(Number(parsed.folate_mcg)) || 0,
+      vitamin_c_mg: round1(Number(parsed.vitamin_c_mg)) || 0,
     };
   } catch {
     return {
@@ -586,8 +588,8 @@ async function analyzeFoodText(
   }
 }
 
-async function saveFoodLog(userId: string, foodText: string, result: AiResult) {
-  await supabase.from("food_logs").insert({
+async function saveFoodLog(userId: string, foodText: string, result: AiResult): Promise<boolean> {
+  const { error } = await supabase.from("food_logs").insert({
     user_id: userId,
     food_text: foodText,
     calories: result.calories,
@@ -601,9 +603,15 @@ async function saveFoodLog(userId: string, foodText: string, result: AiResult) {
     vitamin_c_mg: result.vitamin_c_mg,
     ai_response: result.reply,
   });
+  if (error) {
+    console.error("saveFoodLog failed:", error, { userId, foodText, result });
+    return false;
+  }
+  return true;
 }
 
 function buildSummaryBlock(
+  foodText: string,
   mealTotals: AiResult,
   previousTotals: DailyTotals,
   targetCalories: number | null,
@@ -635,7 +643,8 @@ function buildSummaryBlock(
     ? `โปรตีน: ${newTotals.protein_g}/${targetProtein}g`
     : `โปรตีน: ${newTotals.protein_g}g`;
 
-  let block = `\n\n📊 ยอดสะสมวันนี้`;
+  let block = `\n\n✅ บันทึกแล้ว: ${foodText}`;
+  block += `\n\n📊 ยอดสะสมวันนี้`;
   block += `\n${caloriesLine}`;
   block += `\n${proteinLine}`;
   block += `\nคาร์บ: ${newTotals.carb_g}g`;
@@ -751,17 +760,18 @@ export async function POST(req: NextRequest) {
         const isFoodMessage =
           result.calories !== 0 || result.protein_g !== 0 || result.carb_g !== 0 || result.fat_g !== 0;
 
-        const showFertilityMicros = user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ";
-
-        const finalReply = isFoodMessage
-          ? result.reply +
-            buildSummaryBlock(result, previousTotals, user.target_calories, user.target_protein_g, showFertilityMicros)
-          : result.reply;
-
-        await replyMessage(replyToken, finalReply);
-
         if (isFoodMessage) {
-          await saveFoodLog(userId, userText, result);
+          const saved = await saveFoodLog(userId, userText, result);
+          const showFertilityMicros = user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ";
+
+          const finalReply = saved
+            ? result.reply +
+              buildSummaryBlock(userText, result, previousTotals, user.target_calories, user.target_protein_g, showFertilityMicros)
+            : result.reply + "\n\n⚠️ ขอโทษครับ บันทึกมื้อนี้ไม่สำเร็จ (ปัญหาทางเทคนิค) ลองพิมพ์ส่งใหม่อีกครั้งนะครับ";
+
+          await replyMessage(replyToken, finalReply);
+        } else {
+          await replyMessage(replyToken, result.reply);
         }
 
         await saveChatMessage(userId, "user", userText);
