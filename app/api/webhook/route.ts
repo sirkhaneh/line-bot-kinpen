@@ -101,7 +101,29 @@ function isUndoRequest(text: string): boolean {
   return undoPhrases.some((phrase) => t.includes(phrase));
 }
 
-async function undoLastMeal(userId: string): Promise<string> {
+const GENERIC_UNDO_WORDS = ["มื้อล่าสุด", "รายการล่าสุด", "อันล่าสุด", "มื้อที่แล้ว", "ล่าสุด"];
+
+function extractUndoTarget(text: string): string | null {
+  const t = text.trim();
+  const patterns = [
+    /ยังไม่ได้กิน(.+)/,
+    /ยังไม่ได้ทาน(.+)/,
+    /ไม่ได้กิน(.+)/,
+    /ไม่ได้ทาน(.+)/,
+    /^ลบ(.+)/,
+  ];
+  for (const p of patterns) {
+    const m = t.match(p);
+    if (m && m[1]) {
+      const name = m[1].trim();
+      if (name.length === 0 || GENERIC_UNDO_WORDS.includes(name)) return null;
+      return name;
+    }
+  }
+  return null;
+}
+
+async function undoMeal(userId: string, targetName: string | null): Promise<string> {
   const startOfDayISO = getThailandStartOfDayISO();
 
   const { data, error } = await supabase
@@ -109,17 +131,25 @@ async function undoLastMeal(userId: string): Promise<string> {
     .select("id, food_text")
     .eq("user_id", userId)
     .gte("created_at", startOfDayISO)
-    .order("created_at", { ascending: false })
-    .limit(1);
+    .order("created_at", { ascending: false });
 
   if (error || !data || data.length === 0) {
     return "วันนี้ยังไม่มีรายการอาหารให้ลบเลยครับ 🙂";
   }
 
-  const lastMeal = data[0];
-  await supabase.from("food_logs").delete().eq("id", lastMeal.id);
+  let target = data[0];
 
-  return `ลบ "${lastMeal.food_text}" ออกจากบันทึกวันนี้แล้วครับ ✅ ยอดสะสมอัปเดตให้อัตโนมัติแล้ว`;
+  if (targetName) {
+    const match = data.find((row) => row.food_text.includes(targetName));
+    if (!match) {
+      const list = data.map((r) => r.food_text).join(", ");
+      return `หารายการที่ตรงกับ "${targetName}" ในวันนี้ไม่เจอครับ วันนี้บันทึกไว้: ${list}\n\nลองพิมพ์ชื่อให้ตรงกับที่บันทึกไว้ดูอีกครั้งนะครับ`;
+    }
+    target = match;
+  }
+
+  await supabase.from("food_logs").delete().eq("id", target.id);
+  return `ลบ "${target.food_text}" ออกจากบันทึกวันนี้แล้วครับ ✅ ยอดสะสมอัปเดตให้อัตโนมัติแล้ว`;
 }
 
 const FERTILITY_TARGETS = {
@@ -716,7 +746,8 @@ export async function POST(req: NextRequest) {
         }
 
         if (isUndoRequest(userText)) {
-          const undoResult = await undoLastMeal(userId);
+          const targetName = extractUndoTarget(userText);
+          const undoResult = await undoMeal(userId, targetName);
           await replyMessage(replyToken, undoResult);
           continue;
         }
@@ -753,8 +784,10 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
-        const chatHistory = await getRecentChatHistory(userId);
-        const { totals: previousTotals, foodList } = await getTodayTotals(userId);
+        const [chatHistory, { totals: previousTotals, foodList }] = await Promise.all([
+          getRecentChatHistory(userId),
+          getTodayTotals(userId),
+        ]);
         const result = await analyzeFoodText(userText, user, previousTotals, foodList, chatHistory);
 
         const isFoodMessage =
@@ -774,8 +807,10 @@ export async function POST(req: NextRequest) {
           await replyMessage(replyToken, result.reply);
         }
 
-        await saveChatMessage(userId, "user", userText);
-        await saveChatMessage(userId, "assistant", result.reply);
+        await Promise.all([
+          saveChatMessage(userId, "user", userText),
+          saveChatMessage(userId, "assistant", result.reply),
+        ]);
       }
     }
 
