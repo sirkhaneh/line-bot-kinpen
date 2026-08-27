@@ -100,7 +100,7 @@ const HELP_TEXT =
   "🍽️ บอกว่ากินอะไร — พิมพ์ชื่อเมนูตรงๆ เช่น 'ข้าวกะเพราหมู' ผมจะประมาณแคลอรี่และสารอาหารให้ พร้อมจำสะสมไว้ทั้งวัน\n\n" +
   "💬 ปรึกษาเรื่องอาหาร — ถามได้เลย เช่น 'วันนี้กินอะไรดี' 'ไก่ย่างดีไหม' 'มีอะไรถูกๆ ดีๆ แนะนำไหม'\n\n" +
   "📊 ดูสรุปยอด — พิมพ์ 'สรุปยอดวันนี้' 'สรุปรายอาทิตย์' หรือ 'สรุปเดือนนี้'\n\n" +
-  "🗑️ ลบมื้อ — พิมพ์ 'ยังไม่ได้กิน [ชื่ออาหาร]' หรือแค่ 'ยังไม่ได้กิน' เพื่อลบมื้อล่าสุด ลบหลายอย่างพร้อมกันได้ด้วยจุลภาค เช่น 'ลบ ข้าว, นม, ไข่ดาว'\n\n" +
+  "🗑️ ลบมื้อ — พิมพ์ 'ยังไม่ได้กิน [ชื่ออาหาร]' หรือแค่ 'ยังไม่ได้กิน' เพื่อลบมื้อล่าสุด ลบหลายอย่างพร้อมกันได้ (คั่นด้วยจุลภาค ขึ้นบรรทัดใหม่ หรือเว้นวรรคก็ได้)\n\n" +
   "🗣️ คุยเล่นได้ — ผมคุยเรื่องทั่วไปได้บ้าง แต่ถนัดเรื่องอาหาร/สุขภาพเป็นหลัก\n\n" +
   "พิมพ์ 'help' เมื่อไหร่ก็เรียกดูอันนี้ได้อีกครับ";
 
@@ -121,22 +121,21 @@ function isUndoRequest(text: string): boolean {
 
 const GENERIC_UNDO_WORDS = ["มื้อล่าสุด", "รายการล่าสุด", "อันล่าสุด", "มื้อที่แล้ว", "ล่าสุด", ""];
 
-function extractUndoTargets(text: string): string[] | null {
+function extractUndoTargetRaw(text: string): string | null {
   const t = text.trim();
-  const patterns = [/ยังไม่ได้กิน(.+)/, /ยังไม่ได้ทาน(.+)/, /ไม่ได้กิน(.+)/, /ไม่ได้ทาน(.+)/, /^ลบ(.+)/];
+  const patterns = [/ยังไม่ได้กิน([\s\S]+)/, /ยังไม่ได้ทาน([\s\S]+)/, /ไม่ได้กิน([\s\S]+)/, /ไม่ได้ทาน([\s\S]+)/, /^ลบ([\s\S]+)/];
   for (const p of patterns) {
     const m = t.match(p);
     if (m && m[1]) {
       const raw = m[1].trim();
       if (GENERIC_UNDO_WORDS.includes(raw)) return null;
-      const parts = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-      return parts.length > 0 ? parts : [raw];
+      return raw;
     }
   }
   return null;
 }
 
-async function undoMeals(userId: string, targetNames: string[] | null): Promise<string> {
+async function undoMeals(userId: string, rawTarget: string | null): Promise<string> {
   const startOfDayISO = getThailandStartOfDayISO();
 
   const { data, error } = await supabase
@@ -150,45 +149,77 @@ async function undoMeals(userId: string, targetNames: string[] | null): Promise<
     return "วันนี้ยังไม่มีรายการอาหารให้ลบเลยครับ 🙂";
   }
 
-  if (!targetNames || targetNames.length === 0) {
+  // ไม่ระบุชื่อ -> ลบมื้อล่าสุด
+  if (!rawTarget) {
     const target = data[0];
     await supabase.from("food_logs").delete().eq("id", target.id);
     return `ลบ "${target.food_text}" ออกจากบันทึกวันนี้แล้วครับ ✅ ยอดสะสมอัปเดตให้อัตโนมัติแล้ว`;
   }
 
-  if (targetNames.length === 1) {
-    const targetName = targetNames[0];
-    const match = data.find((row) => row.food_text.includes(targetName));
-    if (!match) {
-      const list = data.map((r) => r.food_text).join(", ");
-      return `หารายการที่ตรงกับ "${targetName}" ในวันนี้ไม่เจอครับ วันนี้บันทึกไว้: ${list}\n\nลองพิมพ์ชื่อให้ตรงกับที่บันทึกไว้ดูอีกครั้งนะครับ`;
+  // ถ้ามีจุลภาค หรือ ขึ้นบรรทัดใหม่ -> ตัดขอบเขตชัดเจน แล้วหาแบบ segment ⊆ ชื่อที่บันทึกไว้
+  const explicitSegments = rawTarget
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  if (explicitSegments.length > 1) {
+    const deleted: string[] = [];
+    const notFound: string[] = [];
+    const usedIds = new Set<string>();
+
+    for (const seg of explicitSegments) {
+      const match = data.find((row) => !usedIds.has(row.id) && row.food_text.includes(seg));
+      if (match) {
+        usedIds.add(match.id);
+        deleted.push(match.food_text);
+      } else {
+        notFound.push(seg);
+      }
     }
-    await supabase.from("food_logs").delete().eq("id", match.id);
-    return `ลบ "${match.food_text}" ออกจากบันทึกวันนี้แล้วครับ ✅ ยอดสะสมอัปเดตให้อัตโนมัติแล้ว`;
+
+    if (usedIds.size > 0) {
+      await supabase.from("food_logs").delete().in("id", Array.from(usedIds));
+    }
+
+    let msg = "";
+    if (deleted.length > 0) msg += `ลบแล้ว: ${deleted.join(", ")} ✅`;
+    if (notFound.length > 0) msg += `${msg ? "\n" : ""}หาไม่เจอ: ${notFound.join(", ")}`;
+    return msg || "ไม่พบรายการที่ตรงกันเลยครับ";
   }
 
-  const deleted: string[] = [];
-  const notFound: string[] = [];
-  const usedIds = new Set<string>();
+  // ไม่มีตัวคั่นชัดเจน (อาจเป็นชื่อเดียว หรือหลายชื่อคั่นด้วยช่องว่างล้วนๆ)
+  // ลองหาว่าชื่ออาหารที่มีอยู่จริงวันนี้ (เรียงยาวไปสั้น) ไปปรากฏอยู่ในข้อความไหมบ้าง
+  const sortedByLength = [...data].sort((a, b) => b.food_text.length - a.food_text.length);
+  const matched: typeof data = [];
+  let remaining = rawTarget;
 
-  for (const name of targetNames) {
-    const match = data.find((row) => !usedIds.has(row.id) && row.food_text.includes(name));
-    if (match) {
-      usedIds.add(match.id);
-      deleted.push(match.food_text);
-    } else {
-      notFound.push(name);
+  for (const candidate of sortedByLength) {
+    const name = candidate.food_text.trim();
+    if (name.length > 0 && remaining.includes(name)) {
+      matched.push(candidate);
+      remaining = remaining.split(name).join(" ");
     }
   }
 
-  if (usedIds.size > 0) {
-    await supabase.from("food_logs").delete().in("id", Array.from(usedIds));
+  if (matched.length > 1) {
+    await supabase.from("food_logs").delete().in("id", matched.map((m) => m.id));
+    return `ลบแล้ว: ${matched.map((m) => m.food_text).join(", ")} ✅`;
   }
 
-  let msg = "";
-  if (deleted.length > 0) msg += `ลบแล้ว: ${deleted.join(", ")} ✅`;
-  if (notFound.length > 0) msg += `${msg ? "\n" : ""}หาไม่เจอ: ${notFound.join(", ")}`;
-  return msg || "ไม่พบรายการที่ตรงกันเลยครับ";
+  if (matched.length === 1) {
+    await supabase.from("food_logs").delete().eq("id", matched[0].id);
+    return `ลบ "${matched[0].food_text}" ออกจากบันทึกวันนี้แล้วครับ ✅ ยอดสะสมอัปเดตให้อัตโนมัติแล้ว`;
+  }
+
+  // สุดท้าย: ลองหาแบบ substring ตรงๆ ครั้งเดียว (เผื่อพิมพ์ย่อ)
+  const single = data.find((row) => row.food_text.includes(rawTarget));
+  if (single) {
+    await supabase.from("food_logs").delete().eq("id", single.id);
+    return `ลบ "${single.food_text}" ออกจากบันทึกวันนี้แล้วครับ ✅ ยอดสะสมอัปเดตให้อัตโนมัติแล้ว`;
+  }
+
+  const list = data.map((r) => r.food_text).join(", ");
+  return `หารายการที่ตรงกับ "${rawTarget}" ในวันนี้ไม่เจอครับ วันนี้บันทึกไว้: ${list}\n\nลองพิมพ์ชื่อให้ตรงกับที่บันทึกไว้ดูอีกครั้งนะครับ`;
 }
 
 const FERTILITY_TARGETS = {
@@ -353,6 +384,20 @@ const EMPTY_TOTALS: DailyTotals = {
   vitamin_c_mg: 0,
 };
 
+function roundTotals(raw: DailyTotals): DailyTotals {
+  return {
+    calories: raw.calories,
+    protein_g: raw.protein_g,
+    carb_g: raw.carb_g,
+    fat_g: raw.fat_g,
+    zinc_mg: Math.round(raw.zinc_mg * 10) / 10,
+    selenium_mcg: Math.round(raw.selenium_mcg * 10) / 10,
+    omega3_mg: Math.round(raw.omega3_mg * 10) / 10,
+    folate_mcg: Math.round(raw.folate_mcg * 10) / 10,
+    vitamin_c_mg: Math.round(raw.vitamin_c_mg * 10) / 10,
+  };
+}
+
 async function getTodayTotals(
   userId: string
 ): Promise<{ totals: DailyTotals; foodList: string }> {
@@ -385,20 +430,8 @@ async function getTodayTotals(
     { ...EMPTY_TOTALS }
   );
 
-  const totals: DailyTotals = {
-    calories: raw.calories,
-    protein_g: raw.protein_g,
-    carb_g: raw.carb_g,
-    fat_g: raw.fat_g,
-    zinc_mg: Math.round(raw.zinc_mg * 10) / 10,
-    selenium_mcg: Math.round(raw.selenium_mcg * 10) / 10,
-    omega3_mg: Math.round(raw.omega3_mg * 10) / 10,
-    folate_mcg: Math.round(raw.folate_mcg * 10) / 10,
-    vitamin_c_mg: Math.round(raw.vitamin_c_mg * 10) / 10,
-  };
-
   const foodList = data.map((row) => row.food_text).join(", ");
-  return { totals, foodList };
+  return { totals: roundTotals(raw), foodList };
 }
 
 function detectSummaryRequest(text: string): "day" | "week" | "month" | null {
@@ -479,18 +512,6 @@ async function getPeriodStats(
     { ...EMPTY_TOTALS }
   );
 
-  const totals: DailyTotals = {
-    calories: raw.calories,
-    protein_g: raw.protein_g,
-    carb_g: raw.carb_g,
-    fat_g: raw.fat_g,
-    zinc_mg: Math.round(raw.zinc_mg * 10) / 10,
-    selenium_mcg: Math.round(raw.selenium_mcg * 10) / 10,
-    omega3_mg: Math.round(raw.omega3_mg * 10) / 10,
-    folate_mcg: Math.round(raw.folate_mcg * 10) / 10,
-    vitamin_c_mg: Math.round(raw.vitamin_c_mg * 10) / 10,
-  };
-
   const THAI_OFFSET_MS = 7 * 60 * 60 * 1000;
   const loggedDates = new Set(
     data.map((row) => {
@@ -499,7 +520,7 @@ async function getPeriodStats(
     })
   );
 
-  return { totals, daysLogged: loggedDates.size };
+  return { totals: roundTotals(raw), daysLogged: loggedDates.size };
 }
 
 function buildPeriodSummary(
@@ -521,11 +542,11 @@ function buildPeriodSummary(
     protein_g: Math.round(stats.totals.protein_g / days),
     carb_g: Math.round(stats.totals.carb_g / days),
     fat_g: Math.round(stats.totals.fat_g / days),
-    zinc_mg: Math.round(stats.totals.zinc_mg / days),
-    selenium_mcg: Math.round(stats.totals.selenium_mcg / days),
-    omega3_mg: Math.round(stats.totals.omega3_mg / days),
-    folate_mcg: Math.round(stats.totals.folate_mcg / days),
-    vitamin_c_mg: Math.round(stats.totals.vitamin_c_mg / days),
+    zinc_mg: Math.round((stats.totals.zinc_mg / days) * 10) / 10,
+    selenium_mcg: Math.round((stats.totals.selenium_mcg / days) * 10) / 10,
+    omega3_mg: Math.round((stats.totals.omega3_mg / days) * 10) / 10,
+    folate_mcg: Math.round((stats.totals.folate_mcg / days) * 10) / 10,
+    vitamin_c_mg: Math.round((stats.totals.vitamin_c_mg / days) * 10) / 10,
   };
 
   let msg = `📅 สรุป${periodLabel} (บันทึกไป ${stats.daysLogged}/${days} วัน)\n\nเฉลี่ยต่อวัน:\n`;
@@ -635,10 +656,10 @@ async function analyzeFoodText(
             "คุณมีบทสนทนาล่าสุด (ถ้ามี) ส่งมาก่อนข้อความปัจจุบัน ใช้บริบทนั้นประกอบการตอบด้วย\n\n" +
             "ตอบกลับเป็น JSON เท่านั้น ตามโครงสร้างนี้:\n" +
             '{"reply": "ข้อความภาษาไทย", "items": [{"name": "ชื่ออาหารสั้นๆ", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข, "zinc_mg": ตัวเลข, "selenium_mcg": ตัวเลข, "omega3_mg": ตัวเลข, "folate_mcg": ตัวเลข, "vitamin_c_mg": ตัวเลข}]}\n\n' +
-            "**สำคัญมาก:** ถ้าข้อความมีอาหารหลายอย่าง (เช่น 'ไข่ต้ม นม') ให้แยกเป็นหลาย object ใน items แต่ละอย่างมีชื่อของตัวเองสั้นๆ ห้ามรวมเป็นก้อนเดียว เพราะระบบต้องเก็บแยกรายการเพื่อให้แก้ไข/ลบทีละอย่างได้ทีหลัง\n\n" +
+            "**สำคัญมาก:** ถ้าข้อความมีอาหารหลายอย่าง ให้แยกเป็นหลาย object ใน items แต่ละอย่างมีชื่อของตัวเองสั้นๆ ห้ามรวมเป็นก้อนเดียว\n\n" +
             "ผู้ใช้พิมพ์มาได้หลายแบบ แยกแยะและตอบตามนี้:\n\n" +
             "แบบที่ 1 — รายงานว่ากินอะไรไปแล้ว/กำลังกิน: ใส่ items ตามจริง ประมาณค่าพลังงาน/สารอาหารเป็นตัวเลขจริง ปรับตามปริมาณจริงที่บอก สมมติหน่วยมาตรฐานถ้าไม่ระบุ ใน reply พูดถึงชื่อเมนู+ปริมาณ+ค่าพลังงานตัวเลขชัดเจนพร้อมโปรตีน, ข้อสังเกตตามเป้าหมาย, คำแนะนำมื้อถัดไปสั้นๆ ห้ามพูดยอดสะสมรวมทั้งวันหรือบวกเลขเอง\n\n" +
-            "แบบที่ 2 — ขอคำแนะนำ/ปรึกษาเรื่องอาหาร (ยังไม่ได้กิน): ตอบแบบเพื่อนที่รู้เรื่องอาหารจริงๆ แนะนำเมนูไทยจริงหาซื้อง่ายราคาไม่แพง คุยธรรมชาติ ไม่ต้องรีบสรุป **items ต้องเป็น array ว่าง [] เสมอ เพราะยังไม่ได้กินจริง**\n\n" +
+            "แบบที่ 2 — ขอคำแนะนำ/ปรึกษาเรื่องอาหาร (ยังไม่ได้กิน): ตอบแบบเพื่อนที่รู้เรื่องอาหารจริงๆ แนะนำเมนูไทยจริงหาซื้อง่ายราคาไม่แพง คุยธรรมชาติ ไม่ต้องรีบสรุป **items ต้องเป็น array ว่าง [] เสมอ**\n\n" +
             "แบบที่ 3 — เรื่องทั่วไปไม่เกี่ยวอาหาร/สุขภาพเลย: คุยธรรมชาติสั้นๆ ห้ามใช้ประโยคจำเจแบบ 'มีอะไรอยากคุยไหม' ห้ามแปะคำแนะนำอาหารท้ายทุกประโยคแบบบังคับ ถ้าซับซ้อนต้องใช้ความรู้เฉพาะทางลึก บอกตรงๆ ว่าแนะนำให้ถามผู้เชี่ยวชาญหรือ ChatGPT ดีกว่า **items ต้องเป็น array ว่าง [] เสมอ**\n\n" +
             `ข้อมูลผู้ใช้: ${profileNote}\n` +
             `คำแนะนำเรื่อง fertility: ${fertilityInstruction}\n` +
@@ -686,20 +707,21 @@ async function analyzeFoodText(
 }
 
 function sumItems(items: FoodItem[]): DailyTotals {
-  return items.reduce(
+  const raw = items.reduce(
     (acc, item) => ({
       calories: acc.calories + item.calories,
       protein_g: acc.protein_g + item.protein_g,
       carb_g: acc.carb_g + item.carb_g,
       fat_g: acc.fat_g + item.fat_g,
-      zinc_mg: Math.round((acc.zinc_mg + item.zinc_mg) * 10) / 10,
-      selenium_mcg: Math.round((acc.selenium_mcg + item.selenium_mcg) * 10) / 10,
-      omega3_mg: Math.round((acc.omega3_mg + item.omega3_mg) * 10) / 10,
-      folate_mcg: Math.round((acc.folate_mcg + item.folate_mcg) * 10) / 10,
-      vitamin_c_mg: Math.round((acc.vitamin_c_mg + item.vitamin_c_mg) * 10) / 10,
+      zinc_mg: acc.zinc_mg + item.zinc_mg,
+      selenium_mcg: acc.selenium_mcg + item.selenium_mcg,
+      omega3_mg: acc.omega3_mg + item.omega3_mg,
+      folate_mcg: acc.folate_mcg + item.folate_mcg,
+      vitamin_c_mg: acc.vitamin_c_mg + item.vitamin_c_mg,
     }),
     { ...EMPTY_TOTALS }
   );
+  return roundTotals(raw);
 }
 
 async function saveFoodItems(userId: string, items: FoodItem[], aiReply: string): Promise<boolean> {
@@ -734,17 +756,17 @@ function buildSummaryBlock(
   targetProtein: number | null,
   showFertilityMicros: boolean
 ): string {
-  const newTotals: DailyTotals = {
+  const newTotals = roundTotals({
     calories: previousTotals.calories + mealTotals.calories,
     protein_g: previousTotals.protein_g + mealTotals.protein_g,
     carb_g: previousTotals.carb_g + mealTotals.carb_g,
     fat_g: previousTotals.fat_g + mealTotals.fat_g,
-    zinc_mg: Math.round((previousTotals.zinc_mg + mealTotals.zinc_mg) * 10) / 10,
-    selenium_mcg: Math.round((previousTotals.selenium_mcg + mealTotals.selenium_mcg) * 10) / 10,
-    omega3_mg: Math.round((previousTotals.omega3_mg + mealTotals.omega3_mg) * 10) / 10,
-    folate_mcg: Math.round((previousTotals.folate_mcg + mealTotals.folate_mcg) * 10) / 10,
-    vitamin_c_mg: Math.round((previousTotals.vitamin_c_mg + mealTotals.vitamin_c_mg) * 10) / 10,
-  };
+    zinc_mg: previousTotals.zinc_mg + mealTotals.zinc_mg,
+    selenium_mcg: previousTotals.selenium_mcg + mealTotals.selenium_mcg,
+    omega3_mg: previousTotals.omega3_mg + mealTotals.omega3_mg,
+    folate_mcg: previousTotals.folate_mcg + mealTotals.folate_mcg,
+    vitamin_c_mg: previousTotals.vitamin_c_mg + mealTotals.vitamin_c_mg,
+  });
 
   const caloriesLine = targetCalories
     ? (() => {
@@ -832,8 +854,8 @@ export async function POST(req: NextRequest) {
         }
 
         if (isUndoRequest(userText)) {
-          const targetNames = extractUndoTargets(userText);
-          const undoResult = await undoMeals(userId, targetNames);
+          const rawTarget = extractUndoTargetRaw(userText);
+          const undoResult = await undoMeals(userId, rawTarget);
           await replyMessage(replyToken, undoResult);
           continue;
         }
