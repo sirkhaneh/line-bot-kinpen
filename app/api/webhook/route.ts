@@ -87,6 +87,12 @@ const HELP_TEXT =
   "📊 ดูสรุปยอด — พิมพ์ 'สรุปยอดวันนี้' 'สรุปรายอาทิตย์' หรือ 'สรุปเดือนนี้'\n\n" +
   "🗣️ คุยเล่นได้ — ผมคุยเรื่องทั่วไปได้บ้าง แต่ถนัดเรื่องอาหาร/สุขภาพเป็นหลัก\n\n" +
   "พิมพ์ 'help' เมื่อไหร่ก็เรียกดูอันนี้ได้อีกครับ";
+  
+function isHelpRequest(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  const helpPhrases = ["help", "ช่วยเหลือ", "คำสั่ง", "วิธีใช้", "วิธีใช้งาน", "สอนใช้งาน", "ใช้ยังไง"];
+  return helpPhrases.includes(t);
+}
 
 function isUndoRequest(text: string): boolean {
   const t = text.trim();
