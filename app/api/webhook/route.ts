@@ -39,6 +39,21 @@ async function replyMessage(replyToken: string, text: string, quickReplyOptions?
   });
 }
 
+async function showLoadingAnimation(userId: string, seconds: number) {
+  try {
+    await fetch("https://api.line.me/v2/bot/chat/loading/start", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${CHANNEL_ACCESS_TOKEN}`,
+      },
+      body: JSON.stringify({ chatId: userId, loadingSeconds: seconds }),
+    });
+  } catch (e) {
+    console.error("loading animation failed:", e);
+  }
+}
+
 async function isDuplicateMessage(messageId: string): Promise<boolean> {
   const { error } = await supabase.from("processed_messages").insert({ message_id: messageId });
   if (error) {
@@ -85,7 +100,7 @@ const HELP_TEXT =
   "🍽️ บอกว่ากินอะไร — พิมพ์ชื่อเมนูตรงๆ เช่น 'ข้าวกะเพราหมู' ผมจะประมาณแคลอรี่และสารอาหารให้ พร้อมจำสะสมไว้ทั้งวัน\n\n" +
   "💬 ปรึกษาเรื่องอาหาร — ถามได้เลย เช่น 'วันนี้กินอะไรดี' 'ไก่ย่างดีไหม' 'มีอะไรถูกๆ ดีๆ แนะนำไหม'\n\n" +
   "📊 ดูสรุปยอด — พิมพ์ 'สรุปยอดวันนี้' 'สรุปรายอาทิตย์' หรือ 'สรุปเดือนนี้'\n\n" +
-  "🗑️ ลบมื้อล่าสุด — พิมพ์ 'ยังไม่ได้กิน' ถ้าผมเข้าใจผิด\n\n" +
+  "🗑️ ลบมื้อ — พิมพ์ 'ยังไม่ได้กิน [ชื่ออาหาร]' หรือแค่ 'ยังไม่ได้กิน' เพื่อลบมื้อล่าสุด\n\n" +
   "🗣️ คุยเล่นได้ — ผมคุยเรื่องทั่วไปได้บ้าง แต่ถนัดเรื่องอาหาร/สุขภาพเป็นหลัก\n\n" +
   "พิมพ์ 'help' เมื่อไหร่ก็เรียกดูอันนี้ได้อีกครับ";
 
@@ -98,25 +113,22 @@ function isHelpRequest(text: string): boolean {
 function isUndoRequest(text: string): boolean {
   const t = text.trim();
   const undoPhrases = ["ลบมื้อล่าสุด", "ลบรายการล่าสุด", "ลบอันล่าสุด", "ยังไม่ได้กิน", "แก้ไขมื้อล่าสุด", "ลบมื้อที่แล้ว"];
-  return undoPhrases.some((phrase) => t.includes(phrase));
+  if (undoPhrases.some((phrase) => t.includes(phrase))) return true;
+  if (t.startsWith("ลบ")) return true;
+  if (t.includes("ไม่ได้กิน") || t.includes("ไม่ได้ทาน")) return true;
+  return false;
 }
 
-const GENERIC_UNDO_WORDS = ["มื้อล่าสุด", "รายการล่าสุด", "อันล่าสุด", "มื้อที่แล้ว", "ล่าสุด"];
+const GENERIC_UNDO_WORDS = ["มื้อล่าสุด", "รายการล่าสุด", "อันล่าสุด", "มื้อที่แล้ว", "ล่าสุด", ""];
 
 function extractUndoTarget(text: string): string | null {
   const t = text.trim();
-  const patterns = [
-    /ยังไม่ได้กิน(.+)/,
-    /ยังไม่ได้ทาน(.+)/,
-    /ไม่ได้กิน(.+)/,
-    /ไม่ได้ทาน(.+)/,
-    /^ลบ(.+)/,
-  ];
+  const patterns = [/ยังไม่ได้กิน(.+)/, /ยังไม่ได้ทาน(.+)/, /ไม่ได้กิน(.+)/, /ไม่ได้ทาน(.+)/, /^ลบ(.+)/];
   for (const p of patterns) {
     const m = t.match(p);
     if (m && m[1]) {
       const name = m[1].trim();
-      if (name.length === 0 || GENERIC_UNDO_WORDS.includes(name)) return null;
+      if (GENERIC_UNDO_WORDS.includes(name)) return null;
       return name;
     }
   }
@@ -507,8 +519,8 @@ async function saveChatMessage(userId: string, role: "user" | "assistant", conte
   await supabase.from("chat_messages").insert({ user_id: userId, role, content });
 }
 
-interface AiResult {
-  reply: string;
+interface FoodItem {
+  name: string;
   calories: number;
   protein_g: number;
   carb_g: number;
@@ -518,6 +530,11 @@ interface AiResult {
   omega3_mg: number;
   folate_mcg: number;
   vitamin_c_mg: number;
+}
+
+interface AiResult {
+  reply: string;
+  items: FoodItem[];
 }
 
 async function analyzeFoodText(
@@ -565,16 +582,17 @@ async function analyzeFoodText(
           content:
             "คุณคือ 'กินเป็น' ผู้ช่วย AI ด้านโภชนาการที่พูดจาเป็นกันเอง เหมือนเพื่อนที่เข้าใจอาหาร ไม่ใช่หมอหรือนักโภชนาการ\n\n" +
             "คุณมีบทสนทนาล่าสุด (ถ้ามี) ส่งมาก่อนข้อความปัจจุบัน ใช้บริบทนั้นประกอบการตอบด้วย\n\n" +
-            "ตอบกลับเป็น JSON เท่านั้น:\n" +
-            '{"reply": "ข้อความภาษาไทย", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข, "zinc_mg": ตัวเลข, "selenium_mcg": ตัวเลข, "omega3_mg": ตัวเลข, "folate_mcg": ตัวเลข, "vitamin_c_mg": ตัวเลข}\n\n' +
+            "ตอบกลับเป็น JSON เท่านั้น ตามโครงสร้างนี้:\n" +
+            '{"reply": "ข้อความภาษาไทย", "items": [{"name": "ชื่ออาหารสั้นๆ", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข, "zinc_mg": ตัวเลข, "selenium_mcg": ตัวเลข, "omega3_mg": ตัวเลข, "folate_mcg": ตัวเลข, "vitamin_c_mg": ตัวเลข}]}\n\n' +
+            "**สำคัญมาก:** ถ้าข้อความมีอาหารหลายอย่าง (เช่น 'ไข่ต้ม นม') ให้แยกเป็นหลาย object ใน items แต่ละอย่างมีชื่อของตัวเองสั้นๆ ห้ามรวมเป็นก้อนเดียว เพราะระบบต้องเก็บแยกรายการเพื่อให้แก้ไข/ลบทีละอย่างได้ทีหลัง\n\n" +
             "ผู้ใช้พิมพ์มาได้หลายแบบ แยกแยะและตอบตามนี้:\n\n" +
-            "แบบที่ 1 — รายงานว่ากินอะไรไปแล้ว/กำลังกิน: ประมาณค่าพลังงาน/สารอาหารเป็นตัวเลขจริง ปรับตามปริมาณจริงที่บอก สมมติหน่วยมาตรฐานถ้าไม่ระบุ ใน reply ต้องมี: ชื่อเมนู+ปริมาณ+ค่าพลังงานตัวเลขชัดเจนพร้อมโปรตีน, ข้อสังเกตตามเป้าหมาย, คำแนะนำมื้อถัดไปสั้นๆ ห้ามพูดยอดสะสมรวมทั้งวันหรือบวกเลขเอง\n\n" +
-            "แบบที่ 2 — ขอคำแนะนำ/ปรึกษาเรื่องอาหาร (ยังไม่ได้กิน): ตอบแบบเพื่อนที่รู้เรื่องอาหารจริงๆ แนะนำเมนูไทยจริงหาซื้อง่ายราคาไม่แพง คุยธรรมชาติ ไม่ต้องรีบสรุป **ห้ามคำนวณหรือใส่ตัวเลขแคล/สารอาหารของเมนูที่แนะนำเด็ดขาด ให้ตัวเลขทั้งหมดเป็น 0**\n\n" +
-            "แบบที่ 3 — เรื่องทั่วไปไม่เกี่ยวอาหาร/สุขภาพเลย: คุยธรรมชาติสั้นๆ ห้ามใช้ประโยคจำเจแบบ 'มีอะไรอยากคุยไหม' ห้ามแปะคำแนะนำอาหารท้ายทุกประโยคแบบบังคับ ถ้าซับซ้อนต้องใช้ความรู้เฉพาะทางลึก บอกตรงๆ ว่าแนะนำให้ถามผู้เชี่ยวชาญหรือ ChatGPT ดีกว่า ให้ตัวเลขทั้งหมดเป็น 0\n\n" +
+            "แบบที่ 1 — รายงานว่ากินอะไรไปแล้ว/กำลังกิน: ใส่ items ตามจริง ประมาณค่าพลังงาน/สารอาหารเป็นตัวเลขจริง ปรับตามปริมาณจริงที่บอก สมมติหน่วยมาตรฐานถ้าไม่ระบุ ใน reply พูดถึงชื่อเมนู+ปริมาณ+ค่าพลังงานตัวเลขชัดเจนพร้อมโปรตีน, ข้อสังเกตตามเป้าหมาย, คำแนะนำมื้อถัดไปสั้นๆ ห้ามพูดยอดสะสมรวมทั้งวันหรือบวกเลขเอง\n\n" +
+            "แบบที่ 2 — ขอคำแนะนำ/ปรึกษาเรื่องอาหาร (ยังไม่ได้กิน): ตอบแบบเพื่อนที่รู้เรื่องอาหารจริงๆ แนะนำเมนูไทยจริงหาซื้อง่ายราคาไม่แพง คุยธรรมชาติ ไม่ต้องรีบสรุป **items ต้องเป็น array ว่าง [] เสมอ เพราะยังไม่ได้กินจริง**\n\n" +
+            "แบบที่ 3 — เรื่องทั่วไปไม่เกี่ยวอาหาร/สุขภาพเลย: คุยธรรมชาติสั้นๆ ห้ามใช้ประโยคจำเจแบบ 'มีอะไรอยากคุยไหม' ห้ามแปะคำแนะนำอาหารท้ายทุกประโยคแบบบังคับ ถ้าซับซ้อนต้องใช้ความรู้เฉพาะทางลึก บอกตรงๆ ว่าแนะนำให้ถามผู้เชี่ยวชาญหรือ ChatGPT ดีกว่า **items ต้องเป็น array ว่าง [] เสมอ**\n\n" +
             `ข้อมูลผู้ใช้: ${profileNote}\n` +
             `คำแนะนำเรื่อง fertility: ${fertilityInstruction}\n` +
             `คำแนะนำเรื่องเป้าหมาย: ${goalInstruction}\n\n` +
-            "**กฎเหล็ก:** ค่าตัวเลขในโครงสร้าง JSON เป็นข้อมูลภายในระบบเท่านั้น ห้ามพูดคำว่า 'ค่า' 'เป็น 0' 'ตัวแปร' ในข้อความ reply เด็ดขาด\n\n" +
+            "**กฎเหล็ก:** ตัวเลขในโครงสร้าง JSON เป็นข้อมูลภายในระบบเท่านั้น ห้ามพูดคำว่า 'ค่า' 'เป็น 0' 'ตัวแปร' ในข้อความ reply เด็ดขาด\n\n" +
             "ห้ามพูดเชิงฟันธงหรืออ้างว่าเป็นคำแนะนำทางการแพทย์ ตอบกระชับ ไม่เกิน 6-7 บรรทัด\n\n" +
             `ข้อมูลวันนี้: ${contextNote}`,
         },
@@ -589,60 +607,77 @@ async function analyzeFoodText(
 
   try {
     const parsed = JSON.parse(content);
-    const round1 = (n: number) => Math.round(n * 10) / 10;
+    const round1 = (n: unknown) => Math.round((Number(n) || 0) * 10) / 10;
+    const items: FoodItem[] = Array.isArray(parsed.items)
+      ? parsed.items.map((it: Record<string, unknown>) => ({
+          name: String(it.name || "อาหาร").slice(0, 100),
+          calories: Math.round(Number(it.calories)) || 0,
+          protein_g: Math.round(Number(it.protein_g)) || 0,
+          carb_g: Math.round(Number(it.carb_g)) || 0,
+          fat_g: Math.round(Number(it.fat_g)) || 0,
+          zinc_mg: round1(it.zinc_mg),
+          selenium_mcg: round1(it.selenium_mcg),
+          omega3_mg: round1(it.omega3_mg),
+          folate_mcg: round1(it.folate_mcg),
+          vitamin_c_mg: round1(it.vitamin_c_mg),
+        }))
+      : [];
     return {
       reply: parsed.reply || "ขอโทษครับ วิเคราะห์ไม่สำเร็จ ลองส่งใหม่อีกครั้งนะครับ",
-      calories: Math.round(Number(parsed.calories)) || 0,
-      protein_g: Math.round(Number(parsed.protein_g)) || 0,
-      carb_g: Math.round(Number(parsed.carb_g)) || 0,
-      fat_g: Math.round(Number(parsed.fat_g)) || 0,
-      zinc_mg: round1(Number(parsed.zinc_mg)) || 0,
-      selenium_mcg: round1(Number(parsed.selenium_mcg)) || 0,
-      omega3_mg: round1(Number(parsed.omega3_mg)) || 0,
-      folate_mcg: round1(Number(parsed.folate_mcg)) || 0,
-      vitamin_c_mg: round1(Number(parsed.vitamin_c_mg)) || 0,
+      items,
     };
   } catch {
     return {
       reply: "ขอโทษครับ วิเคราะห์ไม่สำเร็จ ลองส่งใหม่อีกครั้งนะครับ",
-      calories: 0,
-      protein_g: 0,
-      carb_g: 0,
-      fat_g: 0,
-      zinc_mg: 0,
-      selenium_mcg: 0,
-      omega3_mg: 0,
-      folate_mcg: 0,
-      vitamin_c_mg: 0,
+      items: [],
     };
   }
 }
 
-async function saveFoodLog(userId: string, foodText: string, result: AiResult): Promise<boolean> {
-  const { error } = await supabase.from("food_logs").insert({
+function sumItems(items: FoodItem[]): DailyTotals {
+  return items.reduce(
+    (acc, item) => ({
+      calories: acc.calories + item.calories,
+      protein_g: acc.protein_g + item.protein_g,
+      carb_g: acc.carb_g + item.carb_g,
+      fat_g: acc.fat_g + item.fat_g,
+      zinc_mg: Math.round((acc.zinc_mg + item.zinc_mg) * 10) / 10,
+      selenium_mcg: Math.round((acc.selenium_mcg + item.selenium_mcg) * 10) / 10,
+      omega3_mg: Math.round((acc.omega3_mg + item.omega3_mg) * 10) / 10,
+      folate_mcg: Math.round((acc.folate_mcg + item.folate_mcg) * 10) / 10,
+      vitamin_c_mg: Math.round((acc.vitamin_c_mg + item.vitamin_c_mg) * 10) / 10,
+    }),
+    { ...EMPTY_TOTALS }
+  );
+}
+
+async function saveFoodItems(userId: string, items: FoodItem[], aiReply: string): Promise<boolean> {
+  if (items.length === 0) return true;
+  const rows = items.map((item) => ({
     user_id: userId,
-    food_text: foodText,
-    calories: result.calories,
-    protein_g: result.protein_g,
-    carb_g: result.carb_g,
-    fat_g: result.fat_g,
-    zinc_mg: result.zinc_mg,
-    selenium_mcg: result.selenium_mcg,
-    omega3_mg: result.omega3_mg,
-    folate_mcg: result.folate_mcg,
-    vitamin_c_mg: result.vitamin_c_mg,
-    ai_response: result.reply,
-  });
+    food_text: item.name,
+    calories: item.calories,
+    protein_g: item.protein_g,
+    carb_g: item.carb_g,
+    fat_g: item.fat_g,
+    zinc_mg: item.zinc_mg,
+    selenium_mcg: item.selenium_mcg,
+    omega3_mg: item.omega3_mg,
+    folate_mcg: item.folate_mcg,
+    vitamin_c_mg: item.vitamin_c_mg,
+    ai_response: aiReply,
+  }));
+  const { error } = await supabase.from("food_logs").insert(rows);
   if (error) {
-    console.error("saveFoodLog failed:", error, { userId, foodText, result });
+    console.error("saveFoodItems failed:", error, { userId, items });
     return false;
   }
   return true;
 }
 
 function buildSummaryBlock(
-  foodText: string,
-  mealTotals: AiResult,
+  itemNames: string[],
+  mealTotals: DailyTotals,
   previousTotals: DailyTotals,
   targetCalories: number | null,
   targetProtein: number | null,
@@ -653,11 +688,11 @@ function buildSummaryBlock(
     protein_g: previousTotals.protein_g + mealTotals.protein_g,
     carb_g: previousTotals.carb_g + mealTotals.carb_g,
     fat_g: previousTotals.fat_g + mealTotals.fat_g,
-    zinc_mg: previousTotals.zinc_mg + mealTotals.zinc_mg,
-    selenium_mcg: previousTotals.selenium_mcg + mealTotals.selenium_mcg,
-    omega3_mg: previousTotals.omega3_mg + mealTotals.omega3_mg,
-    folate_mcg: previousTotals.folate_mcg + mealTotals.folate_mcg,
-    vitamin_c_mg: previousTotals.vitamin_c_mg + mealTotals.vitamin_c_mg,
+    zinc_mg: Math.round((previousTotals.zinc_mg + mealTotals.zinc_mg) * 10) / 10,
+    selenium_mcg: Math.round((previousTotals.selenium_mcg + mealTotals.selenium_mcg) * 10) / 10,
+    omega3_mg: Math.round((previousTotals.omega3_mg + mealTotals.omega3_mg) * 10) / 10,
+    folate_mcg: Math.round((previousTotals.folate_mcg + mealTotals.folate_mcg) * 10) / 10,
+    vitamin_c_mg: Math.round((previousTotals.vitamin_c_mg + mealTotals.vitamin_c_mg) * 10) / 10,
   };
 
   const caloriesLine = targetCalories
@@ -673,7 +708,7 @@ function buildSummaryBlock(
     ? `โปรตีน: ${newTotals.protein_g}/${targetProtein}g`
     : `โปรตีน: ${newTotals.protein_g}g`;
 
-  let block = `\n\n✅ บันทึกแล้ว: ${foodText}`;
+  let block = `\n\n✅ บันทึกแล้ว: ${itemNames.join(", ")}`;
   block += `\n\n📊 ยอดสะสมวันนี้`;
   block += `\n${caloriesLine}`;
   block += `\n${proteinLine}`;
@@ -784,22 +819,32 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
+        await showLoadingAnimation(userId, 20);
+
         const [chatHistory, { totals: previousTotals, foodList }] = await Promise.all([
           getRecentChatHistory(userId),
           getTodayTotals(userId),
         ]);
         const result = await analyzeFoodText(userText, user, previousTotals, foodList, chatHistory);
 
-        const isFoodMessage =
-          result.calories !== 0 || result.protein_g !== 0 || result.carb_g !== 0 || result.fat_g !== 0;
+        const isFoodMessage = result.items.length > 0;
 
         if (isFoodMessage) {
-          const saved = await saveFoodLog(userId, userText, result);
+          const saved = await saveFoodItems(userId, result.items, result.reply);
+          const mealTotals = sumItems(result.items);
           const showFertilityMicros = user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ";
+          const itemNames = result.items.map((i) => i.name);
 
           const finalReply = saved
             ? result.reply +
-              buildSummaryBlock(userText, result, previousTotals, user.target_calories, user.target_protein_g, showFertilityMicros)
+              buildSummaryBlock(
+                itemNames,
+                mealTotals,
+                previousTotals,
+                user.target_calories,
+                user.target_protein_g,
+                showFertilityMicros
+              )
             : result.reply + "\n\n⚠️ ขอโทษครับ บันทึกมื้อนี้ไม่สำเร็จ (ปัญหาทางเทคนิค) ลองพิมพ์ส่งใหม่อีกครั้งนะครับ";
 
           await replyMessage(replyToken, finalReply);
