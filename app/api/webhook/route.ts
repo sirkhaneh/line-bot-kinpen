@@ -80,6 +80,20 @@ const FEMALE_GOALS = ["เพิ่มกล้าม/พลังงาน", "�
 const WELCOME_TEXT =
   "สวัสดีครับ ผมกินเป็น 🙂\nเป็น AI ผู้ช่วยเรื่องกินและโภชนาการ ใช้ง่ายมาก แค่พิมพ์บอกว่ากินอะไรมา ผมจะช่วยประมาณแคลอรี่และสารอาหารให้ พร้อมจดจำได้ว่าวันนี้กินอะไรไปแล้วบ้าง\n\nก่อนเริ่ม ขอถามข้อมูลนิดหน่อยเพื่อแนะนำได้ตรงจุดนะครับ\n\nคุณเป็นเพศอะไรครับ?";
 
+const HELP_TEXT =
+  "📖 วิธีใช้กินเป็น\n\n" +
+  "🍽️ บอกว่ากินอะไร — พิมพ์ชื่อเมนูตรงๆ เช่น 'ข้าวกะเพราหมู' ผมจะประมาณแคลอรี่และสารอาหารให้ พร้อมจำสะสมไว้ทั้งวัน\n\n" +
+  "💬 ปรึกษาเรื่องอาหาร — ถามได้เลย เช่น 'วันนี้กินอะไรดี' 'ไก่ย่างดีไหม' 'มีอะไรถูกๆ ดีๆ แนะนำไหม'\n\n" +
+  "📊 ดูสรุปยอด — พิมพ์ 'สรุปยอดวันนี้' 'สรุปรายอาทิตย์' หรือ 'สรุปเดือนนี้'\n\n" +
+  "🗣️ คุยเล่นได้ — ผมคุยเรื่องทั่วไปได้บ้าง แต่ถนัดเรื่องอาหาร/สุขภาพเป็นหลัก\n\n" +
+  "พิมพ์ 'help' เมื่อไหร่ก็เรียกดูอันนี้ได้อีกครับ";
+
+function isHelpRequest(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  const helpPhrases = ["help", "ช่วยเหลือ", "คำสั่ง", "วิธีใช้", "วิธีใช้งาน", "สอนใช้งาน", "ใช้ยังไง"];
+  return helpPhrases.includes(t);
+}
+
 const FERTILITY_TARGETS = {
   zinc_mg: 11,
   selenium_mcg: 55,
@@ -201,7 +215,7 @@ async function handleOnboarding(userId: string, user: UserProfile, text: string,
 
     await replyMessage(
       replyToken,
-      `เรียบร้อยครับ! 🎉\n\nจากข้อมูลของคุณ เป้าหมายพลังงานต่อวันอยู่ที่ประมาณ ${targetCalories} แคล โปรตีนประมาณ ${targetProtein} กรัม${extraNote}\n\n(ค่าประมาณกลางๆ ยังไม่รวมระดับกิจกรรมจริง ใช้เป็นแนวทางได้เลยครับ)\n\nลองส่งเมนูที่กินมาได้เลยครับ (พิมพ์ 'สรุปรายอาทิตย์' หรือ 'สรุปเดือนนี้' เพื่อดูภาพรวมย้อนหลังได้ด้วยนะ)`
+      `เรียบร้อยครับ! 🎉\n\nจากข้อมูลของคุณ เป้าหมายพลังงานต่อวันอยู่ที่ประมาณ ${targetCalories} แคล โปรตีนประมาณ ${targetProtein} กรัม${extraNote}\n\n(ค่าประมาณกลางๆ ยังไม่รวมระดับกิจกรรมจริง ใช้เป็นแนวทางได้เลยครับ)\n\nลองส่งเมนูที่กินมาได้เลยครับ หรือพิมพ์ 'help' เพื่อดูวิธีใช้ทั้งหมดนะครับ`
     );
     return;
   }
@@ -278,12 +292,51 @@ async function getTodayTotals(
   return { totals, foodList };
 }
 
-function detectSummaryRequest(text: string): "week" | "month" | null {
+function detectSummaryRequest(text: string): "day" | "week" | "month" | null {
   const t = text.trim();
   if (!/สรุป/.test(t)) return null;
   if (/เดือน|30\s*วัน/.test(t)) return "month";
   if (/อาทิตย์|สัปดาห์|7\s*วัน/.test(t)) return "week";
-  return null;
+  return "day";
+}
+
+function buildDailySummaryReply(
+  totals: DailyTotals,
+  foodList: string,
+  targetCalories: number | null,
+  targetProtein: number | null,
+  showFertilityMicros: boolean
+): string {
+  if (!foodList) {
+    return "วันนี้ยังไม่มีการบันทึกอาหารเลยครับ พิมพ์บอกมาได้เลยว่ากินอะไรไปแล้วบ้าง 🙂";
+  }
+
+  const caloriesLine = targetCalories
+    ? (() => {
+        const remaining = targetCalories - totals.calories;
+        return remaining >= 0
+          ? `แคล: ${totals.calories}/${targetCalories} (เหลืออีก ${remaining})`
+          : `แคล: ${totals.calories}/${targetCalories} (เกินไป ${Math.abs(remaining)})`;
+      })()
+    : `แคล: ${totals.calories}`;
+
+  const proteinLine = targetProtein
+    ? `โปรตีน: ${totals.protein_g}/${targetProtein}g`
+    : `โปรตีน: ${totals.protein_g}g`;
+
+  let msg = `📊 สรุปยอดวันนี้\n\nกินไปแล้ว: ${foodList}\n\n`;
+  msg += `${caloriesLine}\n${proteinLine}\nคาร์บ: ${totals.carb_g}g\nไขมัน: ${totals.fat_g}g`;
+
+  if (showFertilityMicros) {
+    msg += `\n\n🎯 สารอาหารเพื่ออสุจิ`;
+    msg += `\nZinc: ${totals.zinc_mg}/${FERTILITY_TARGETS.zinc_mg}mg`;
+    msg += `\nSelenium: ${totals.selenium_mcg}/${FERTILITY_TARGETS.selenium_mcg}mcg`;
+    msg += `\nOmega-3: ${totals.omega3_mg}/${FERTILITY_TARGETS.omega3_mg}mg`;
+    msg += `\nFolate: ${totals.folate_mcg}/${FERTILITY_TARGETS.folate_mcg}mcg`;
+    msg += `\nVit C: ${totals.vitamin_c_mg}/${FERTILITY_TARGETS.vitamin_c_mg}mg`;
+  }
+
+  return msg;
 }
 
 async function getPeriodStats(
@@ -373,6 +426,29 @@ function buildPeriodSummary(
   return msg;
 }
 
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+async function getRecentChatHistory(userId: string, limit = 6): Promise<ChatMessage[]> {
+  const sevenDaysAgoISO = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from("chat_messages")
+    .select("role, content")
+    .eq("user_id", userId)
+    .gte("created_at", sevenDaysAgoISO)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error || !data) return [];
+  return data.reverse().map((row) => ({ role: row.role as "user" | "assistant", content: row.content }));
+}
+
+async function saveChatMessage(userId: string, role: "user" | "assistant", content: string) {
+  await supabase.from("chat_messages").insert({ user_id: userId, role, content });
+}
+
 interface AiResult {
   reply: string;
   calories: number;
@@ -390,28 +466,31 @@ async function analyzeFoodText(
   foodText: string,
   user: UserProfile,
   previousTotals: DailyTotals,
-  foodListSoFar: string
+  foodListSoFar: string,
+  chatHistory: ChatMessage[]
 ): Promise<AiResult> {
   const contextNote =
     foodListSoFar.length > 0
-      ? `ก่อนหน้ามื้อนี้ วันนี้กินไปแล้ว: ${foodListSoFar} รวมพลังงานประมาณ ${previousTotals.calories} แคล โปรตีน ${previousTotals.protein_g} กรัม`
-      : "วันนี้ยังไม่มีข้อมูลมื้อก่อนหน้า ถือว่าเป็นมื้อแรกของวัน";
+      ? `วันนี้กินไปแล้ว: ${foodListSoFar} รวมพลังงานประมาณ ${previousTotals.calories} แคล โปรตีน ${previousTotals.protein_g} กรัม (ตัวเลขนี้ไม่รวมข้อความปัจจุบัน)`
+      : "วันนี้ยังไม่มีข้อมูลมื้อก่อนหน้าเลย";
 
   const profileNote = `ผู้ใช้เพศ${user.gender === "male" ? "ชาย" : "หญิง"} อายุ ${user.age} ปี น้ำหนัก ${user.weight_kg} กก. ส่วนสูง ${user.height_cm} ซม. เป้าหมายหลักคือ "${user.goal}"`;
 
   const fertilityInstruction =
     user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ"
-      ? "เน้นชี้จุดที่เกี่ยวกับ zinc, selenium, omega-3, folate, vitamin C ในทุกคำตอบ"
+      ? "เน้นชี้จุดที่เกี่ยวกับ zinc, selenium, omega-3, folate, vitamin C เสมอ"
       : user.gender === "male"
-      ? "ถ้าเมนูมีสารอาหารเกี่ยวกับสุขภาพสืบพันธุ์เพศชายชัดเจน พูดถึงสั้นๆ ได้ แต่ไม่ต้องเน้น"
+      ? "ถ้าเกี่ยวกับสุขภาพสืบพันธุ์เพศชายชัดเจน พูดถึงสั้นๆ ได้ แต่ไม่ต้องเน้น"
       : "ห้ามพูดเรื่องสุขภาพสืบพันธุ์เพศชายเด็ดขาด";
 
   const goalInstruction =
     user.goal === "ลดน้ำหนัก"
-      ? "เน้นเตือนถ้าแคล/คาร์บของมื้อนี้ค่อนข้างสูง"
+      ? "เน้นเตือนถ้าแคล/คาร์บสูง"
       : user.goal === "เพิ่มกล้าม/พลังงาน"
       ? "เน้นเช็คว่าโปรตีนพอไหม"
       : "ให้คำแนะนำสมดุลทั่วไป";
+
+  const historyMessages = chatHistory.map((m) => ({ role: m.role, content: m.content }));
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -427,30 +506,22 @@ async function analyzeFoodText(
           role: "system",
           content:
             "คุณคือ 'กินเป็น' ผู้ช่วย AI ด้านโภชนาการที่พูดจาเป็นกันเอง เหมือนเพื่อนที่เข้าใจอาหาร ไม่ใช่หมอหรือนักโภชนาการ\n\n" +
-            "ตอบกลับเป็น JSON เท่านั้น ตามโครงสร้างนี้:\n" +
-            '{"reply": "ข้อความภาษาไทย กระชับ", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข, "zinc_mg": ตัวเลข, "selenium_mcg": ตัวเลข, "omega3_mg": ตัวเลข, "folate_mcg": ตัวเลข, "vitamin_c_mg": ตัวเลข}\n\n' +
-            "ตัวเลขทั้งหมด = ค่าประมาณรวมของทุกเมนูที่กล่าวถึงในข้อความนี้ ปรับตามปริมาณจริงที่ผู้ใช้บอก (เช่น 'ครึ่งซอง' 'กินไม่หมด') เป็นจำนวนเต็ม ถ้าเมนูไม่มีสารอาหารตัวนั้นเลยให้ใส่ 0\n\n" +
-            "แนวทางประมาณสารอาหารสำคัญ (คร่าวๆ พอ ไม่ต้องแม่นระดับห้องแล็บ):\n" +
-            "- zinc_mg: สูงในหอยนางรม เนื้อแดง ไข่ ถั่ว เมล็ดฟักทอง\n" +
-            "- selenium_mcg: สูงในอาหารทะเล ไข่ เครื่องใน ธัญพืชไม่ขัดสี\n" +
-            "- omega3_mg: สูงในปลาทะเลน้ำลึก (แซลมอน ทูน่า ปลาซาบะ) วอลนัท เมล็ดแฟลกซ์\n" +
-            "- folate_mcg: สูงในผักใบเขียวเข้ม ถั่ว ตับ\n" +
-            "- vitamin_c_mg: สูงในผลไม้รสเปรี้ยว ฝรั่ง พริกหวาน มะละกอ\n\n" +
-            "เมื่อประมาณปริมาณอาหาร ให้สมมติเป็นปริมาณมาตรฐาน 1 หน่วย (จาน/ชาม/แก้ว/ลูก/ฟอง/แผ่น/ที่) เว้นแต่ผู้ใช้ระบุปริมาณต่างจากมาตรฐานเอง ให้ปรับตัวเลขตามนั้น และระบุปริมาณที่ใช้ในคำตอบเสมอ\n\n" +
-            "ใน 'reply' ต้องมีครบทุกข้อนี้เสมอ ห้ามข้าม:\n" +
-            "1. ชื่อเมนู + ปริมาณ + ค่าพลังงานโดยประมาณเป็นตัวเลขชัดเจน พร้อมโปรตีนโดยประมาณเป็นตัวเลข ห้ามพูดลอยๆ โดยไม่มีตัวเลขเด็ดขาด\n" +
-            "2. ข้อสังเกตตามเป้าหมาย/fertility ของมื้อนี้\n" +
-            "3. คำแนะนำมื้อถัดไปสั้นๆ\n\n" +
-            "**ห้ามพูดถึงยอดสะสมรวมทั้งวันในคำตอบเด็ดขาด ห้ามบวกเลขสะสมเอง**\n\n" +
+            "คุณมีบทสนทนาล่าสุด (ถ้ามี) ส่งมาก่อนข้อความปัจจุบัน ใช้บริบทนั้นประกอบการตอบด้วย เช่น ถ้าผู้ใช้ถามต่อจากที่คุยไว้ก่อนหน้า ให้เข้าใจว่ากำลังพูดถึงอะไรจริง อย่าเดามั่ว\n\n" +
+            "ตอบกลับเป็น JSON เท่านั้น:\n" +
+            '{"reply": "ข้อความภาษาไทย", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข, "zinc_mg": ตัวเลข, "selenium_mcg": ตัวเลข, "omega3_mg": ตัวเลข, "folate_mcg": ตัวเลข, "vitamin_c_mg": ตัวเลข}\n\n' +
+            "ผู้ใช้พิมพ์มาได้หลายแบบ แยกแยะและตอบตามนี้:\n\n" +
+            "แบบที่ 1 — รายงานว่ากินอะไรไปแล้ว/กำลังกิน: ประมาณค่าพลังงาน/สารอาหารเป็นตัวเลขจริง ปรับตามปริมาณจริงที่บอก (ครึ่งซอง, กินไม่หมด) สมมติหน่วยมาตรฐานถ้าไม่ระบุ (จาน/ชาม/แก้ว/ลูก/ฟอง/แผ่น/ที่) ใน reply ต้องมี: ชื่อเมนู+ปริมาณ+ค่าพลังงานตัวเลขชัดเจนพร้อมโปรตีน, ข้อสังเกตตามเป้าหมาย, คำแนะนำมื้อถัดไปสั้นๆ ห้ามพูดยอดสะสมรวมทั้งวันหรือบวกเลขเอง (ระบบต่อท้ายอัตโนมัติ)\n\n" +
+            "แบบที่ 2 — ขอคำแนะนำ/ปรึกษาเรื่องอาหาร (ยังไม่ได้กิน) เช่น 'วันนี้กินอะไรดี' 'ไก่ย่างดีไหม' 'มีอาหารไทยถูกๆ ดีๆ แนะนำไหม': ตอบแบบเพื่อนที่รู้เรื่องอาหารจริงๆ แนะนำเมนูไทยจริงหาซื้อง่ายราคาไม่แพง คุยธรรมชาติ ลึก/ยาวเท่าที่จำเป็น ไม่ต้องรีบสรุป อ้างอิงสิ่งที่กินวันนี้แบบกว้างๆ เชิงคุณภาพเท่านั้น (เช่น 'วันนี้ยังขาดโปรตีนอยู่พอสมควร' ห้ามบอกตัวเลขแม่นๆ) ให้ตัวเลขทั้งหมดเป็น 0\n\n" +
+            "แบบที่ 3 — เรื่องทั่วไปไม่เกี่ยวอาหาร/สุขภาพเลย: คุยธรรมชาติสั้นๆ แบบเพื่อน ห้ามใช้ประโยคจำเจแบบ 'มีอะไรอยากคุยไหม' ห้ามแปะคำแนะนำอาหาร/สุขภาพท้ายทุกประโยคแบบบังคับ พูดเรื่องอาหารเฉพาะเข้ากับบริบทจริงๆ ถ้าซับซ้อนต้องใช้ความรู้เฉพาะทางลึก (โค้ด, กฎหมาย, การเงิน) บอกตรงๆ ว่าแนะนำให้ถามผู้เชี่ยวชาญหรือ ChatGPT ดีกว่า ให้ตัวเลขทั้งหมดเป็น 0\n\n" +
             `ข้อมูลผู้ใช้: ${profileNote}\n` +
             `คำแนะนำเรื่อง fertility: ${fertilityInstruction}\n` +
             `คำแนะนำเรื่องเป้าหมาย: ${goalInstruction}\n\n` +
-            "ถ้าผู้ใช้พิมพ์เรื่องอื่นที่ไม่เกี่ยวกับอาหาร ตอบใน 'reply' แบบเพื่อนคุยเป็นธรรมชาติ ไม่ต้องรีบชวนกลับมาเรื่องอาหารทุกครั้ง แต่ถ้าเรื่องนั้นซับซ้อน ต้องใช้ความรู้เฉพาะทางลึก (เช่น เขียนโค้ด, กฎหมาย, การเงิน) ให้บอกตรงๆ ว่าแนะนำให้ลองถามผู้เชี่ยวชาญหรือ ChatGPT ดูดีกว่า และให้ตัวเลขทั้งหมดเป็น 0\n\n" +
-            "**กฎเหล็กที่ห้ามฝ่าฝืนเด็ดขาด:** ค่าตัวเลข calories/protein_g/carb_g/fat_g/zinc_mg/selenium_mcg/omega3_mg/folate_mcg/vitamin_c_mg เป็นข้อมูลภายในสำหรับระบบเท่านั้น ห้ามพูดถึงตัวเลขเหล่านี้ ห้ามพูดคำว่า 'ค่า' 'เป็น 0' 'ตัวแปร' หรืออ้างอิงถึงมันในข้อความ 'reply' เด็ดขาด และห้ามพูดถึงข้อความ 'กินไป:' ที่เป็นรูปแบบภายในที่ระบบใช้ส่งข้อมูลให้คุณ\n\n" +
-            "ห้ามพูดในเชิงฟันธงหรืออ้างว่าเป็นคำแนะนำทางการแพทย์ ตอบกระชับ ไม่เกิน 5-6 บรรทัด\n\n" +
-            `ข้อมูลวันนี้ก่อนมื้อนี้: ${contextNote}`,
+            "**กฎเหล็ก:** ค่าตัวเลขในโครงสร้าง JSON เป็นข้อมูลภายในระบบเท่านั้น ห้ามพูดคำว่า 'ค่า' 'เป็น 0' 'ตัวแปร' ในข้อความ reply เด็ดขาด\n\n" +
+            "ห้ามพูดเชิงฟันธงหรืออ้างว่าเป็นคำแนะนำทางการแพทย์ ตอบกระชับ ไม่เกิน 6-7 บรรทัด\n\n" +
+            `ข้อมูลวันนี้: ${contextNote}`,
         },
-        { role: "user", content: `กินไป: ${foodText}` },
+        ...historyMessages,
+        { role: "user", content: foodText },
       ],
     }),
   });
@@ -603,12 +674,31 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
+        if (isHelpRequest(userText)) {
+          await replyMessage(replyToken, HELP_TEXT);
+          continue;
+        }
+
         const summaryRequest = detectSummaryRequest(userText);
         if (summaryRequest) {
+          const showFertilityMicros = user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ";
+
+          if (summaryRequest === "day") {
+            const { totals, foodList } = await getTodayTotals(userId);
+            const summaryText = buildDailySummaryReply(
+              totals,
+              foodList,
+              user.target_calories,
+              user.target_protein_g,
+              showFertilityMicros
+            );
+            await replyMessage(replyToken, summaryText);
+            continue;
+          }
+
           const days = summaryRequest === "week" ? 7 : 30;
           const periodLabel = summaryRequest === "week" ? "รายสัปดาห์" : "รายเดือน";
           const stats = await getPeriodStats(userId, days);
-          const showFertilityMicros = user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ";
           const summaryText = buildPeriodSummary(
             periodLabel,
             days,
@@ -621,8 +711,9 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
+        const chatHistory = await getRecentChatHistory(userId);
         const { totals: previousTotals, foodList } = await getTodayTotals(userId);
-        const result = await analyzeFoodText(userText, user, previousTotals, foodList);
+        const result = await analyzeFoodText(userText, user, previousTotals, foodList, chatHistory);
 
         const isFoodMessage =
           result.calories !== 0 || result.protein_g !== 0 || result.carb_g !== 0 || result.fat_g !== 0;
@@ -639,6 +730,9 @@ export async function POST(req: NextRequest) {
         if (isFoodMessage) {
           await saveFoodLog(userId, userText, result);
         }
+
+        await saveChatMessage(userId, "user", userText);
+        await saveChatMessage(userId, "assistant", result.reply);
       }
     }
 
