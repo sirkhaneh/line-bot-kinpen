@@ -101,7 +101,7 @@ const HELP_TEXT =
   "💬 ปรึกษาเรื่องอาหาร — ถามได้เลย เช่น 'วันนี้กินอะไรดี' 'ไก่ย่างดีไหม' 'มีอะไรถูกๆ ดีๆ แนะนำไหม'\n\n" +
   "📊 ดูสรุปยอด — พิมพ์ 'สรุปยอดวันนี้' 'สรุปรายอาทิตย์' หรือ 'สรุปเดือนนี้'\n\n" +
   "🗑️ ลบมื้อ — พิมพ์ 'ยังไม่ได้กิน [ชื่ออาหาร]' หรือแค่ 'ยังไม่ได้กิน' เพื่อลบมื้อล่าสุด ลบหลายอย่างพร้อมกันได้ (คั่นด้วยจุลภาค ขึ้นบรรทัดใหม่ หรือเว้นวรรคก็ได้)\n\n" +
-  "✏️ แก้ไขปริมาณ/รายละเอียด — พิมพ์แก้ไขต่อได้เลย (เช่น '1 ขวด ครับ') ระบบจะพยายามแทนที่ของเดิมให้อัตโนมัติ ถ้าไม่แน่ใจว่าทำงานถูกไหม ลองพิมพ์ 'สรุปยอดวันนี้' เช็คได้เสมอ หรือถ้าอยากชัวร์ ลบของเดิมก่อน (เช่น 'ลบ นม') แล้วพิมพ์รายการใหม่ทั้งหมด\n\n" +
+  "✏️ แก้ไขข้อมูลที่บันทึกผิด — ให้ลบของเดิมก่อนเสมอ (เช่น 'ลบ นม') แล้วค่อยพิมพ์รายการใหม่ที่ถูกต้อง ระบบยังไม่รองรับการแก้ไขทับข้อความเดิมโดยตรง\n\n" +
   "💡 กินหลายอย่างพร้อมกัน — ถ้าอยากให้แยกแม่นขึ้น คั่นด้วยจุลภาคหรือใส่ปริมาณกำกับ เช่น 'ธัญพืช 1 ห่อ, โยเกิร์ต 1 ถ้วย' แทนที่จะพิมพ์ติดกันเฉยๆ\n\n" +
   "🗣️ คุยเล่นได้ — ผมคุยเรื่องทั่วไปได้บ้าง แต่ถนัดเรื่องอาหาร/สุขภาพเป็นหลัก\n\n" +
   "พิมพ์ 'help' เมื่อไหร่ก็เรียกดูอันนี้ได้อีกครับ";
@@ -209,8 +209,6 @@ async function undoMeals(userId: string, rawTarget: string | null): Promise<stri
     return `ลบ "${matched[0].food_text}" ออกจากบันทึกวันนี้แล้วครับ ✅ ยอดสะสมอัปเดตให้อัตโนมัติแล้ว`;
   }
 
-  // ไม่มีตัวคั่นชัดเจน และไม่เจอแบบแยกได้หลายชื่อ -> ลองหาแบบ substring ตรงๆ
-  // ถ้าเจอมากกว่า 1 ตัวที่ตรงกัน ให้ถามก่อน ไม่เดาเอง (ป้องกันลบผิดตัวเวลาชื่อซ้ำกัน)
   const allMatches = data.filter((row) => row.food_text.includes(rawTarget));
   if (allMatches.length === 1) {
     await supabase.from("food_logs").delete().eq("id", allMatches[0].id);
@@ -596,7 +594,6 @@ async function saveChatMessage(userId: string, role: "user" | "assistant", conte
 
 interface FoodItem {
   name: string;
-  replaces: string | null;
   calories: number;
   protein_g: number;
   carb_g: number;
@@ -659,12 +656,10 @@ async function analyzeFoodText(
             "คุณคือ 'กินเป็น' ผู้ช่วย AI ด้านโภชนาการที่พูดจาเป็นกันเอง เหมือนเพื่อนที่เข้าใจอาหาร ไม่ใช่หมอหรือนักโภชนาการ\n\n" +
             "คุณมีบทสนทนาล่าสุด (ถ้ามี) ส่งมาก่อนข้อความปัจจุบัน ใช้บริบทนั้นแค่เพื่อเข้าใจสถานการณ์และให้คำแนะนำต่อเนื่อง ไม่ใช่เพื่อนำมา log ซ้ำ\n\n" +
             "ตอบกลับเป็น JSON เท่านั้น ตามโครงสร้างนี้:\n" +
-            '{"reply": "ข้อความภาษาไทย", "items": [{"name": "ชื่ออาหารสั้นๆ", "replaces": "ชื่อรายการเดิมที่ควรถูกแทนที่ หรือ null", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข, "zinc_mg": ตัวเลข, "selenium_mcg": ตัวเลข, "omega3_mg": ตัวเลข, "folate_mcg": ตัวเลข, "vitamin_c_mg": ตัวเลข}]}\n\n' +
-            "**กฎสำคัญที่สุดเรื่อง items:**\n" +
-            "1. items ต้องมีเฉพาะรายการอาหารที่ถูกกล่าวถึงในข้อความปัจจุบันของผู้ใช้เท่านั้น ห้ามนำรายการอาหารจากบทสนทนาก่อนหน้ามาใส่ซ้ำใน items อีก แม้จะอ้างอิงถึงมันในข้อความ reply เพื่อความต่อเนื่องของบทสนทนาก็ตาม\n" +
-            "2. ถ้าข้อความปัจจุบันเป็นการแก้ไข/อัปเดตรายละเอียด (เช่น ปริมาณ, ชนิด) ของอาหารที่เพิ่งพูดถึงไปแล้วในบทสนทนาก่อนหน้า (เทียบจากรายการ 'วันนี้กินไปแล้ว' ด้านล่าง) ให้ตั้ง 'replaces' เป็นชื่อของรายการเดิมที่ใกล้เคียงที่สุดที่ควรถูกแทนที่ สัญญาณที่บ่งบอกว่าเป็นการแก้ไข (ไม่ใช่รายงานใหม่) เช่น มีคำว่า 'ที่จริง', 'แก้เป็น', 'ไม่ใช่...จริงๆคือ', 'พอดี', หรือข้อความเป็นการเติมรายละเอียดที่ยังขาดหายไปจากของเดิม (เช่น ของเดิมไม่ระบุปริมาณ ข้อความนี้มาระบุปริมาณให้) ถ้าไม่มีสัญญาณเหล่านี้และข้อความอ่านได้เป็นการกินเพิ่มอีกรายการตามธรรมชาติ ให้ถือเป็นรายการใหม่ (replaces เป็น null) แม้ชื่อจะคล้ายของเดิมก็ตาม เพราะกินซ้ำเมนูเดิมสองครั้งก็เป็นไปได้จริง\n\n" +
+            '{"reply": "ข้อความภาษาไทย", "items": [{"name": "ชื่ออาหารสั้นๆ", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข, "zinc_mg": ตัวเลข, "selenium_mcg": ตัวเลข, "omega3_mg": ตัวเลข, "folate_mcg": ตัวเลข, "vitamin_c_mg": ตัวเลข}]}\n\n' +
+            "**กฎสำคัญเรื่อง items: ต้องมีเฉพาะรายการอาหารที่ถูกกล่าวถึงในข้อความปัจจุบันของผู้ใช้เท่านั้น ห้ามนำรายการอาหารจากบทสนทนาก่อนหน้ามาใส่ซ้ำใน items อีก แม้จะอ้างอิงถึงมันในข้อความ reply เพื่อความต่อเนื่องของบทสนทนาก็ตาม**\n\n" +
             "ผู้ใช้พิมพ์มาได้หลายแบบ แยกแยะและตอบตามนี้:\n\n" +
-            "แบบที่ 1 — รายงานว่ากินอะไรไปแล้ว/กำลังกิน (รวมถึงแก้ไขของเดิม): ใส่ items ตามจริง ประมาณค่าพลังงาน/สารอาหารเป็นตัวเลขจริง ปรับตามปริมาณจริงที่บอก สมมติหน่วยมาตรฐานถ้าไม่ระบุ ใน reply พูดถึงชื่อเมนู+ปริมาณ+ค่าพลังงานตัวเลขชัดเจนพร้อมโปรตีน, ข้อสังเกตตามเป้าหมาย, คำแนะนำมื้อถัดไปสั้นๆ ห้ามพูดยอดสะสมรวมทั้งวันหรือบวกเลขเอง\n\n" +
+            "แบบที่ 1 — รายงานว่ากินอะไรไปแล้ว/กำลังกิน: ใส่ items ตามจริง ประมาณค่าพลังงาน/สารอาหารเป็นตัวเลขจริง ปรับตามปริมาณจริงที่บอก สมมติหน่วยมาตรฐานถ้าไม่ระบุ ใน reply พูดถึงชื่อเมนู+ปริมาณ+ค่าพลังงานตัวเลขชัดเจนพร้อมโปรตีน, ข้อสังเกตตามเป้าหมาย, คำแนะนำมื้อถัดไปสั้นๆ ห้ามพูดยอดสะสมรวมทั้งวันหรือบวกเลขเอง\n\n" +
             "แบบที่ 2 — ขอคำแนะนำ/ปรึกษาเรื่องอาหาร (ยังไม่ได้กิน): ตอบแบบเพื่อนที่รู้เรื่องอาหารจริงๆ แนะนำเมนูไทยจริงหาซื้อง่ายราคาไม่แพง คุยธรรมชาติ ไม่ต้องรีบสรุป **items ต้องเป็น array ว่าง [] เสมอ**\n\n" +
             "แบบที่ 3 — เรื่องทั่วไปไม่เกี่ยวอาหาร/สุขภาพเลย: คุยธรรมชาติสั้นๆ ห้ามใช้ประโยคจำเจแบบ 'มีอะไรอยากคุยไหม' ห้ามแปะคำแนะนำอาหารท้ายทุกประโยคแบบบังคับ ถ้าซับซ้อนต้องใช้ความรู้เฉพาะทางลึก บอกตรงๆ ว่าแนะนำให้ถามผู้เชี่ยวชาญหรือ ChatGPT ดีกว่า **items ต้องเป็น array ว่าง [] เสมอ**\n\n" +
             `ข้อมูลผู้ใช้: ${profileNote}\n` +
@@ -689,10 +684,6 @@ async function analyzeFoodText(
     const items: FoodItem[] = Array.isArray(parsed.items)
       ? parsed.items.map((it: Record<string, unknown>) => ({
           name: String(it.name || "อาหาร").slice(0, 100),
-          replaces:
-            typeof it.replaces === "string" && it.replaces.trim().length > 0
-              ? it.replaces.trim().slice(0, 100)
-              : null,
           calories: Math.round(Number(it.calories)) || 0,
           protein_g: Math.round(Number(it.protein_g)) || 0,
           carb_g: Math.round(Number(it.carb_g)) || 0,
@@ -716,44 +707,8 @@ async function analyzeFoodText(
   }
 }
 
-async function saveFoodItemsWithReplace(
-  userId: string,
-  items: FoodItem[],
-  aiReply: string
-): Promise<{ saved: boolean; replacedNames: string[] }> {
-  if (items.length === 0) return { saved: true, replacedNames: [] };
-
-  const replacedNames: string[] = [];
-  const needsReplaceCheck = items.some((item) => item.replaces);
-
-  if (needsReplaceCheck) {
-    const startOfDayISO = getThailandStartOfDayISO();
-    const { data: todayRows } = await supabase
-      .from("food_logs")
-      .select("id, food_text")
-      .eq("user_id", userId)
-      .gte("created_at", startOfDayISO)
-      .order("created_at", { ascending: false });
-
-    if (todayRows && todayRows.length > 0) {
-      const usedIds = new Set<string>();
-      for (const item of items) {
-        if (item.replaces) {
-          const match = todayRows.find(
-            (row) => !usedIds.has(row.id) && row.food_text.includes(item.replaces!)
-          );
-          if (match) {
-            usedIds.add(match.id);
-            replacedNames.push(match.food_text);
-          }
-        }
-      }
-      if (usedIds.size > 0) {
-        await supabase.from("food_logs").delete().in("id", Array.from(usedIds));
-      }
-    }
-  }
-
+async function saveFoodItems(userId: string, items: FoodItem[], aiReply: string): Promise<boolean> {
+  if (items.length === 0) return true;
   const rows = items.map((item) => ({
     user_id: userId,
     food_text: item.name,
@@ -768,13 +723,12 @@ async function saveFoodItemsWithReplace(
     vitamin_c_mg: item.vitamin_c_mg,
     ai_response: aiReply,
   }));
-
   const { error } = await supabase.from("food_logs").insert(rows);
   if (error) {
-    console.error("saveFoodItemsWithReplace failed:", error, { userId, items });
-    return { saved: false, replacedNames };
+    console.error("saveFoodItems failed:", error, { userId, items });
+    return false;
   }
-  return { saved: true, replacedNames };
+  return true;
 }
 
 function buildSummaryBlock(
@@ -919,17 +873,13 @@ export async function POST(req: NextRequest) {
         const isFoodMessage = result.items.length > 0;
 
         if (isFoodMessage) {
-          const { saved, replacedNames } = await saveFoodItemsWithReplace(userId, result.items, result.reply);
+          const saved = await saveFoodItems(userId, result.items, result.reply);
           const itemNames = result.items.map((i) => i.name);
           const showFertilityMicros = user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ";
 
           if (saved) {
             const { totals: newTotals } = await getTodayTotals(userId);
-            const confirmationLine =
-              replacedNames.length > 0
-                ? `🔄 แก้ไขแล้ว: ${replacedNames.join(", ")} → ${itemNames.join(", ")}`
-                : `✅ บันทึกแล้ว: ${itemNames.join(", ")}`;
-
+            const confirmationLine = `✅ บันทึกแล้ว: ${itemNames.join(", ")}`;
             const finalReply =
               result.reply +
               buildSummaryBlock(
