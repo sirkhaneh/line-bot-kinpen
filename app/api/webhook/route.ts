@@ -100,7 +100,7 @@ const HELP_TEXT =
   "🍽️ บอกว่ากินอะไร — พิมพ์ชื่อเมนูตรงๆ เช่น 'ข้าวกะเพราหมู' ผมจะประมาณแคลอรี่และสารอาหารให้ พร้อมจำสะสมไว้ทั้งวัน\n\n" +
   "💬 ปรึกษาเรื่องอาหาร — ถามได้เลย เช่น 'วันนี้กินอะไรดี' 'ไก่ย่างดีไหม' 'มีอะไรถูกๆ ดีๆ แนะนำไหม'\n\n" +
   "📊 ดูสรุปยอด — พิมพ์ 'สรุปยอดวันนี้' 'สรุปรายอาทิตย์' หรือ 'สรุปเดือนนี้'\n\n" +
-  "🗑️ ลบมื้อ — พิมพ์ 'ยังไม่ได้กิน [ชื่ออาหาร]' หรือแค่ 'ยังไม่ได้กิน' เพื่อลบมื้อล่าสุด\n\n" +
+  "🗑️ ลบมื้อ — พิมพ์ 'ยังไม่ได้กิน [ชื่ออาหาร]' หรือแค่ 'ยังไม่ได้กิน' เพื่อลบมื้อล่าสุด ลบหลายอย่างพร้อมกันได้ด้วยจุลภาค เช่น 'ลบ ข้าว, นม, ไข่ดาว'\n\n" +
   "🗣️ คุยเล่นได้ — ผมคุยเรื่องทั่วไปได้บ้าง แต่ถนัดเรื่องอาหาร/สุขภาพเป็นหลัก\n\n" +
   "พิมพ์ 'help' เมื่อไหร่ก็เรียกดูอันนี้ได้อีกครับ";
 
@@ -121,21 +121,22 @@ function isUndoRequest(text: string): boolean {
 
 const GENERIC_UNDO_WORDS = ["มื้อล่าสุด", "รายการล่าสุด", "อันล่าสุด", "มื้อที่แล้ว", "ล่าสุด", ""];
 
-function extractUndoTarget(text: string): string | null {
+function extractUndoTargets(text: string): string[] | null {
   const t = text.trim();
   const patterns = [/ยังไม่ได้กิน(.+)/, /ยังไม่ได้ทาน(.+)/, /ไม่ได้กิน(.+)/, /ไม่ได้ทาน(.+)/, /^ลบ(.+)/];
   for (const p of patterns) {
     const m = t.match(p);
     if (m && m[1]) {
-      const name = m[1].trim();
-      if (GENERIC_UNDO_WORDS.includes(name)) return null;
-      return name;
+      const raw = m[1].trim();
+      if (GENERIC_UNDO_WORDS.includes(raw)) return null;
+      const parts = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+      return parts.length > 0 ? parts : [raw];
     }
   }
   return null;
 }
 
-async function undoMeal(userId: string, targetName: string | null): Promise<string> {
+async function undoMeals(userId: string, targetNames: string[] | null): Promise<string> {
   const startOfDayISO = getThailandStartOfDayISO();
 
   const { data, error } = await supabase
@@ -149,19 +150,45 @@ async function undoMeal(userId: string, targetName: string | null): Promise<stri
     return "วันนี้ยังไม่มีรายการอาหารให้ลบเลยครับ 🙂";
   }
 
-  let target = data[0];
+  if (!targetNames || targetNames.length === 0) {
+    const target = data[0];
+    await supabase.from("food_logs").delete().eq("id", target.id);
+    return `ลบ "${target.food_text}" ออกจากบันทึกวันนี้แล้วครับ ✅ ยอดสะสมอัปเดตให้อัตโนมัติแล้ว`;
+  }
 
-  if (targetName) {
+  if (targetNames.length === 1) {
+    const targetName = targetNames[0];
     const match = data.find((row) => row.food_text.includes(targetName));
     if (!match) {
       const list = data.map((r) => r.food_text).join(", ");
       return `หารายการที่ตรงกับ "${targetName}" ในวันนี้ไม่เจอครับ วันนี้บันทึกไว้: ${list}\n\nลองพิมพ์ชื่อให้ตรงกับที่บันทึกไว้ดูอีกครั้งนะครับ`;
     }
-    target = match;
+    await supabase.from("food_logs").delete().eq("id", match.id);
+    return `ลบ "${match.food_text}" ออกจากบันทึกวันนี้แล้วครับ ✅ ยอดสะสมอัปเดตให้อัตโนมัติแล้ว`;
   }
 
-  await supabase.from("food_logs").delete().eq("id", target.id);
-  return `ลบ "${target.food_text}" ออกจากบันทึกวันนี้แล้วครับ ✅ ยอดสะสมอัปเดตให้อัตโนมัติแล้ว`;
+  const deleted: string[] = [];
+  const notFound: string[] = [];
+  const usedIds = new Set<string>();
+
+  for (const name of targetNames) {
+    const match = data.find((row) => !usedIds.has(row.id) && row.food_text.includes(name));
+    if (match) {
+      usedIds.add(match.id);
+      deleted.push(match.food_text);
+    } else {
+      notFound.push(name);
+    }
+  }
+
+  if (usedIds.size > 0) {
+    await supabase.from("food_logs").delete().in("id", Array.from(usedIds));
+  }
+
+  let msg = "";
+  if (deleted.length > 0) msg += `ลบแล้ว: ${deleted.join(", ")} ✅`;
+  if (notFound.length > 0) msg += `${msg ? "\n" : ""}หาไม่เจอ: ${notFound.join(", ")}`;
+  return msg || "ไม่พบรายการที่ตรงกันเลยครับ";
 }
 
 const FERTILITY_TARGETS = {
@@ -343,7 +370,7 @@ async function getTodayTotals(
     return { totals: { ...EMPTY_TOTALS }, foodList: "" };
   }
 
-  const totals = data.reduce(
+  const raw = data.reduce(
     (acc, row) => ({
       calories: acc.calories + (row.calories || 0),
       protein_g: acc.protein_g + (row.protein_g || 0),
@@ -357,6 +384,18 @@ async function getTodayTotals(
     }),
     { ...EMPTY_TOTALS }
   );
+
+  const totals: DailyTotals = {
+    calories: raw.calories,
+    protein_g: raw.protein_g,
+    carb_g: raw.carb_g,
+    fat_g: raw.fat_g,
+    zinc_mg: Math.round(raw.zinc_mg * 10) / 10,
+    selenium_mcg: Math.round(raw.selenium_mcg * 10) / 10,
+    omega3_mg: Math.round(raw.omega3_mg * 10) / 10,
+    folate_mcg: Math.round(raw.folate_mcg * 10) / 10,
+    vitamin_c_mg: Math.round(raw.vitamin_c_mg * 10) / 10,
+  };
 
   const foodList = data.map((row) => row.food_text).join(", ");
   return { totals, foodList };
@@ -425,7 +464,7 @@ async function getPeriodStats(
 
   if (error || !data || data.length === 0) return null;
 
-  const totals = data.reduce(
+  const raw = data.reduce(
     (acc, row) => ({
       calories: acc.calories + (row.calories || 0),
       protein_g: acc.protein_g + (row.protein_g || 0),
@@ -439,6 +478,18 @@ async function getPeriodStats(
     }),
     { ...EMPTY_TOTALS }
   );
+
+  const totals: DailyTotals = {
+    calories: raw.calories,
+    protein_g: raw.protein_g,
+    carb_g: raw.carb_g,
+    fat_g: raw.fat_g,
+    zinc_mg: Math.round(raw.zinc_mg * 10) / 10,
+    selenium_mcg: Math.round(raw.selenium_mcg * 10) / 10,
+    omega3_mg: Math.round(raw.omega3_mg * 10) / 10,
+    folate_mcg: Math.round(raw.folate_mcg * 10) / 10,
+    vitamin_c_mg: Math.round(raw.vitamin_c_mg * 10) / 10,
+  };
 
   const THAI_OFFSET_MS = 7 * 60 * 60 * 1000;
   const loggedDates = new Set(
@@ -781,8 +832,8 @@ export async function POST(req: NextRequest) {
         }
 
         if (isUndoRequest(userText)) {
-          const targetName = extractUndoTarget(userText);
-          const undoResult = await undoMeal(userId, targetName);
+          const targetNames = extractUndoTargets(userText);
+          const undoResult = await undoMeals(userId, targetNames);
           await replyMessage(replyToken, undoResult);
           continue;
         }
