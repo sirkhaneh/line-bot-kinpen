@@ -319,6 +319,23 @@ function buildKnownFoodsHint(matches: KnownFood[]): string {
   return `\n\n**สำคัญ: ผู้ใช้เคยยืนยันค่าที่แน่นอนไว้แล้วสำหรับรายการต่อไปนี้ ถ้าข้อความปัจจุบันพูดถึงรายการเหล่านี้ ต้องใช้ตัวเลขนี้เป๊ะๆ ห้ามประมาณใหม่เอง และในข้อความ reply ต้องพูดอย่างมั่นใจโดยระบุตัวเลขเหล่านี้ตรงๆ ห้ามพูดว่า 'ข้อมูลยังไม่แน่ชัด' หรือ 'ไม่มีตัวเลขเฉพาะเจาะจง' เด็ดขาด เพราะมีข้อมูลที่แน่นอนจากผู้ใช้อยู่แล้ว:**\n${lines.join("\n")}`;
 }
 
+function buildKnownFoodsUsedLine(matches: KnownFood[]): string {
+  if (matches.length === 0) return "";
+  const lines = matches.map((kf) => {
+    const parts: string[] = [];
+    if (kf.zinc_mg > 0) parts.push(`Zinc ${kf.zinc_mg}mg`);
+    if (kf.selenium_mcg > 0) parts.push(`Selenium ${kf.selenium_mcg}mcg`);
+    if (kf.omega3_mg > 0) parts.push(`Omega-3 ${kf.omega3_mg}mg`);
+    if (kf.folate_mcg > 0) parts.push(`Folate ${kf.folate_mcg}mcg`);
+    if (kf.vitamin_c_mg > 0) parts.push(`Vit C ${kf.vitamin_c_mg}mg`);
+    if (kf.vitamin_d_mcg > 0) parts.push(`Vit D ${kf.vitamin_d_mcg}mcg`);
+    if (kf.vitamin_e_mg > 0) parts.push(`Vit E ${kf.vitamin_e_mg}mg`);
+    if (kf.calories > 0) parts.push(`${kf.calories} แคล`);
+    return `${kf.name}: ${parts.join(", ")}`;
+  });
+  return `\n\n📌 ใช้ค่าที่จำไว้:\n${lines.join("\n")}`;
+}
+
 const FERTILITY_TARGETS = {
   zinc_mg: 11,
   selenium_mcg: 55,
@@ -1032,8 +1049,10 @@ export async function POST(req: NextRequest) {
           if (saved) {
             const { totals: newTotals } = await getTodayTotals(userId);
             const confirmationLine = `✅ บันทึกแล้ว: ${itemNames.join(", ")}`;
+            const knownUsedLine = buildKnownFoodsUsedLine(knownMatches);
             const finalReply =
               result.reply +
+              knownUsedLine +
               buildSummaryBlock(
                 confirmationLine,
                 newTotals,
