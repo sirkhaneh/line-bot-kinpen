@@ -98,6 +98,8 @@ const WELCOME_TEXT =
 const HELP_TEXT =
   "📖 วิธีใช้กินเป็น\n\n" +
   "🍽️ บอกว่ากินอะไร — พิมพ์ชื่อเมนูตรงๆ เช่น 'ข้าวกะเพราหมู' ผมจะประมาณแคลอรี่และสารอาหารให้ พร้อมจำสะสมไว้ทั้งวัน\n\n" +
+  "💧 บอกว่าดื่มน้ำ — พิมพ์เช่น 'น้ำ 1 แก้ว' หรือ 'น้ำ 500ml' ผมจะช่วยติดตามปริมาณน้ำทั้งวันให้ด้วย\n\n" +
+  "💊 อาหารเสริม/วิตามิน — พิมพ์บอกได้เลย จะบันทึกไว้ว่าทานแล้ว แม้จะไม่มีข้อมูลแคลอรี่ก็ตาม\n\n" +
   "💬 ปรึกษาเรื่องอาหาร — ถามได้เลย เช่น 'วันนี้กินอะไรดี' 'ไก่ย่างดีไหม' 'มีอะไรถูกๆ ดีๆ แนะนำไหม'\n\n" +
   "📊 ดูสรุปยอด — พิมพ์ 'สรุปยอดวันนี้' 'สรุปรายอาทิตย์' หรือ 'สรุปเดือนนี้'\n\n" +
   "🗑️ ลบมื้อ — พิมพ์ 'ยังไม่ได้กิน [ชื่ออาหาร]' หรือแค่ 'ยังไม่ได้กิน' เพื่อลบมื้อล่าสุด ลบหลายอย่างพร้อมกันได้ (คั่นด้วยจุลภาค ขึ้นบรรทัดใหม่ หรือเว้นวรรคก็ได้)\n\n" +
@@ -231,6 +233,8 @@ const FERTILITY_TARGETS = {
   vitamin_c_mg: 90,
 };
 
+const WATER_TARGET_ML = 2500;
+
 function calculateTargets(user: {
   gender: string;
   age: number;
@@ -344,7 +348,7 @@ async function handleOnboarding(userId: string, user: UserProfile, text: string,
 
     await replyMessage(
       replyToken,
-      `เรียบร้อยครับ! 🎉\n\nจากข้อมูลของคุณ เป้าหมายพลังงานต่อวันอยู่ที่ประมาณ ${targetCalories} แคล โปรตีนประมาณ ${targetProtein} กรัม${extraNote}\n\n(ค่าประมาณกลางๆ ยังไม่รวมระดับกิจกรรมจริง ใช้เป็นแนวทางได้เลยครับ)\n\nลองส่งเมนูที่กินมาได้เลยครับ หรือพิมพ์ 'help' เพื่อดูวิธีใช้ทั้งหมดนะครับ`
+      `เรียบร้อยครับ! 🎉\n\nจากข้อมูลของคุณ เป้าหมายพลังงานต่อวันอยู่ที่ประมาณ ${targetCalories} แคล โปรตีนประมาณ ${targetProtein} กรัม${extraNote}\nน้ำดื่มแนะนำ ~${WATER_TARGET_ML}ml/วัน\n\n(ค่าประมาณกลางๆ ยังไม่รวมระดับกิจกรรมจริง ใช้เป็นแนวทางได้เลยครับ)\n\nลองส่งเมนูที่กินมาได้เลยครับ หรือพิมพ์ 'help' เพื่อดูวิธีใช้ทั้งหมดนะครับ`
     );
     return;
   }
@@ -366,6 +370,7 @@ interface DailyTotals {
   protein_g: number;
   carb_g: number;
   fat_g: number;
+  water_ml: number;
   zinc_mg: number;
   selenium_mcg: number;
   omega3_mg: number;
@@ -378,6 +383,7 @@ const EMPTY_TOTALS: DailyTotals = {
   protein_g: 0,
   carb_g: 0,
   fat_g: 0,
+  water_ml: 0,
   zinc_mg: 0,
   selenium_mcg: 0,
   omega3_mg: 0,
@@ -391,6 +397,7 @@ function roundTotals(raw: DailyTotals): DailyTotals {
     protein_g: raw.protein_g,
     carb_g: raw.carb_g,
     fat_g: raw.fat_g,
+    water_ml: Math.round(raw.water_ml),
     zinc_mg: Math.round(raw.zinc_mg * 10) / 10,
     selenium_mcg: Math.round(raw.selenium_mcg * 10) / 10,
     omega3_mg: Math.round(raw.omega3_mg * 10) / 10,
@@ -407,7 +414,7 @@ async function getTodayTotals(
   const { data, error } = await supabase
     .from("food_logs")
     .select(
-      "food_text, calories, protein_g, carb_g, fat_g, zinc_mg, selenium_mcg, omega3_mg, folate_mcg, vitamin_c_mg"
+      "food_text, calories, protein_g, carb_g, fat_g, water_ml, zinc_mg, selenium_mcg, omega3_mg, folate_mcg, vitamin_c_mg"
     )
     .eq("user_id", userId)
     .gte("created_at", startOfDayISO);
@@ -422,6 +429,7 @@ async function getTodayTotals(
       protein_g: acc.protein_g + (row.protein_g || 0),
       carb_g: acc.carb_g + (row.carb_g || 0),
       fat_g: acc.fat_g + (row.fat_g || 0),
+      water_ml: acc.water_ml + (row.water_ml || 0),
       zinc_mg: acc.zinc_mg + (row.zinc_mg || 0),
       selenium_mcg: acc.selenium_mcg + (row.selenium_mcg || 0),
       omega3_mg: acc.omega3_mg + (row.omega3_mg || 0),
@@ -469,6 +477,7 @@ function buildDailySummaryReply(
 
   let msg = `📊 สรุปยอดวันนี้\n\nกินไปแล้ว: ${foodList}\n\n`;
   msg += `${caloriesLine}\n${proteinLine}\nคาร์บ: ${totals.carb_g}g\nไขมัน: ${totals.fat_g}g`;
+  msg += `\n💧 น้ำ: ${totals.water_ml}/${WATER_TARGET_ML}ml`;
 
   if (showFertilityMicros) {
     msg += `\n\n🎯 สารอาหารเพื่ออสุจิ`;
@@ -491,7 +500,7 @@ async function getPeriodStats(
   const { data, error } = await supabase
     .from("food_logs")
     .select(
-      "created_at, calories, protein_g, carb_g, fat_g, zinc_mg, selenium_mcg, omega3_mg, folate_mcg, vitamin_c_mg"
+      "created_at, calories, protein_g, carb_g, fat_g, water_ml, zinc_mg, selenium_mcg, omega3_mg, folate_mcg, vitamin_c_mg"
     )
     .eq("user_id", userId)
     .gte("created_at", cutoffISO);
@@ -504,6 +513,7 @@ async function getPeriodStats(
       protein_g: acc.protein_g + (row.protein_g || 0),
       carb_g: acc.carb_g + (row.carb_g || 0),
       fat_g: acc.fat_g + (row.fat_g || 0),
+      water_ml: acc.water_ml + (row.water_ml || 0),
       zinc_mg: acc.zinc_mg + (row.zinc_mg || 0),
       selenium_mcg: acc.selenium_mcg + (row.selenium_mcg || 0),
       omega3_mg: acc.omega3_mg + (row.omega3_mg || 0),
@@ -543,6 +553,7 @@ function buildPeriodSummary(
     protein_g: Math.round(stats.totals.protein_g / days),
     carb_g: Math.round(stats.totals.carb_g / days),
     fat_g: Math.round(stats.totals.fat_g / days),
+    water_ml: Math.round(stats.totals.water_ml / days),
     zinc_mg: Math.round((stats.totals.zinc_mg / days) * 10) / 10,
     selenium_mcg: Math.round((stats.totals.selenium_mcg / days) * 10) / 10,
     omega3_mg: Math.round((stats.totals.omega3_mg / days) * 10) / 10,
@@ -556,6 +567,7 @@ function buildPeriodSummary(
   msg += `\nโปรตีน: ${avg.protein_g}g`;
   if (targetProtein) msg += `/${targetProtein}g (${pct(avg.protein_g, targetProtein)}%)`;
   msg += `\nคาร์บ: ${avg.carb_g}g\nไขมัน: ${avg.fat_g}g`;
+  msg += `\n💧 น้ำ: ${avg.water_ml}/${WATER_TARGET_ML}ml (${pct(avg.water_ml, WATER_TARGET_ML)}%)`;
 
   if (showFertilityMicros) {
     msg += `\n\n🎯 เฉลี่ยสารอาหารเพื่ออสุจิ/วัน:\n`;
@@ -598,6 +610,7 @@ interface FoodItem {
   protein_g: number;
   carb_g: number;
   fat_g: number;
+  water_ml: number;
   zinc_mg: number;
   selenium_mcg: number;
   omega3_mg: number;
@@ -656,10 +669,12 @@ async function analyzeFoodText(
             "คุณคือ 'กินเป็น' ผู้ช่วย AI ด้านโภชนาการที่พูดจาเป็นกันเอง เหมือนเพื่อนที่เข้าใจอาหาร ไม่ใช่หมอหรือนักโภชนาการ\n\n" +
             "คุณมีบทสนทนาล่าสุด (ถ้ามี) ส่งมาก่อนข้อความปัจจุบัน ใช้บริบทนั้นแค่เพื่อเข้าใจสถานการณ์และให้คำแนะนำต่อเนื่อง ไม่ใช่เพื่อนำมา log ซ้ำ\n\n" +
             "ตอบกลับเป็น JSON เท่านั้น ตามโครงสร้างนี้:\n" +
-            '{"reply": "ข้อความภาษาไทย", "items": [{"name": "ชื่ออาหารพร้อมปริมาณ/หน่วยเสมอ เช่น \'ไข่ต้ม 2 ฟอง\' \'ข้าว 1 จาน\' ห้ามใส่แค่ชื่อเปล่าๆ โดยไม่มีปริมาณ", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข, "zinc_mg": ตัวเลข, "selenium_mcg": ตัวเลข, "omega3_mg": ตัวเลข, "folate_mcg": ตัวเลข, "vitamin_c_mg": ตัวเลข}]}\n\n' +
-            "**กฎสำคัญเรื่อง items: ต้องมีเฉพาะรายการอาหารที่ถูกกล่าวถึงในข้อความปัจจุบันของผู้ใช้เท่านั้น ห้ามนำรายการอาหารจากบทสนทนาก่อนหน้ามาใส่ซ้ำใน items อีก แม้จะอ้างอิงถึงมันในข้อความ reply เพื่อความต่อเนื่องของบทสนทนาก็ตาม**\n\n" +
+            '{"reply": "ข้อความภาษาไทย", "items": [{"name": "ชื่ออาหารพร้อมปริมาณ/หน่วยเสมอ เช่น \'ไข่ต้ม 2 ฟอง\' \'ข้าว 1 จาน\' ห้ามใส่แค่ชื่อเปล่าๆ", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข, "water_ml": ตัวเลข, "zinc_mg": ตัวเลข, "selenium_mcg": ตัวเลข, "omega3_mg": ตัวเลข, "folate_mcg": ตัวเลข, "vitamin_c_mg": ตัวเลข}]}\n\n' +
+            "**กฎสำคัญเรื่อง items: ต้องมีเฉพาะรายการที่ถูกกล่าวถึงในข้อความปัจจุบันของผู้ใช้เท่านั้น ห้ามนำรายการจากบทสนทนาก่อนหน้ามาใส่ซ้ำอีก**\n\n" +
+            "**เรื่องอาหารเสริม/วิตามิน/ยา:** ถ้าผู้ใช้บอกว่าทานอาหารเสริม/วิตามิน/ยา (เช่น Mennevit) ให้ใส่เป็น item เสมอแม้จะไม่รู้ค่าแคลอรี่/สารอาหารแน่ชัด (ใส่ตัวเลขที่ไม่รู้เป็น 0 ทั้งหมด) เพราะการบันทึกว่าทานแล้วมีประโยชน์ต่อการติดตาม ห้ามปล่อยให้ items ว่างเปล่าเพียงเพราะไม่มีข้อมูลตัวเลข\n\n" +
+            "**เรื่องน้ำดื่ม:** ถ้าผู้ใช้บอกว่าดื่มน้ำเปล่า ให้ใส่เป็น item (เช่น name: 'น้ำเปล่า 1 แก้ว') ประมาณ water_ml ตามหน่วยมาตรฐาน (1 แก้ว≈250ml, 1 ขวดเล็ก≈500ml, 1 ขวดใหญ่≈1500ml) ค่าอื่นๆ เป็น 0 ถ้าเป็นเครื่องดื่มอื่น (กาแฟ นม น้ำอัดลม) ให้ water_ml เป็น 0 เสมอ นับเฉพาะน้ำเปล่าจริงๆ\n\n" +
             "ผู้ใช้พิมพ์มาได้หลายแบบ แยกแยะและตอบตามนี้:\n\n" +
-            "แบบที่ 1 — รายงานว่ากินอะไรไปแล้ว/กำลังกิน: ใส่ items ตามจริง ประมาณค่าพลังงาน/สารอาหารเป็นตัวเลขจริง ปรับตามปริมาณจริงที่บอก สมมติหน่วยมาตรฐานถ้าไม่ระบุ **field 'name' ของแต่ละ item ต้องมีปริมาณ/หน่วยกำกับเสมอ (เช่น '2 ฟอง', '1 จาน', '1 ขวด') ไม่ว่าผู้ใช้จะระบุปริมาณมาเองหรือเป็นการสมมติหน่วยมาตรฐาน** ใน reply พูดถึงชื่อเมนู+ปริมาณ+ค่าพลังงานตัวเลขชัดเจนพร้อมโปรตีน, ข้อสังเกตตามเป้าหมาย, คำแนะนำมื้อถัดไปสั้นๆ ห้ามพูดยอดสะสมรวมทั้งวันหรือบวกเลขเอง\n\n" +
+            "แบบที่ 1 — รายงานว่ากินอะไรไปแล้ว/กำลังกิน (รวมอาหารเสริมและน้ำ): ใส่ items ตามจริง ประมาณค่าเป็นตัวเลขจริง ปรับตามปริมาณจริงที่บอก สมมติหน่วยมาตรฐานถ้าไม่ระบุ ใน reply พูดถึงชื่อเมนู+ปริมาณ+ค่าพลังงานตัวเลขชัดเจนพร้อมโปรตีน, ข้อสังเกตตามเป้าหมาย, คำแนะนำมื้อถัดไปสั้นๆ ห้ามพูดยอดสะสมรวมทั้งวันหรือบวกเลขเอง\n\n" +
             "แบบที่ 2 — ขอคำแนะนำ/ปรึกษาเรื่องอาหาร (ยังไม่ได้กิน): ตอบแบบเพื่อนที่รู้เรื่องอาหารจริงๆ แนะนำเมนูไทยจริงหาซื้อง่ายราคาไม่แพง คุยธรรมชาติ ไม่ต้องรีบสรุป **items ต้องเป็น array ว่าง [] เสมอ**\n\n" +
             "แบบที่ 3 — เรื่องทั่วไปไม่เกี่ยวอาหาร/สุขภาพเลย: คุยธรรมชาติสั้นๆ ห้ามใช้ประโยคจำเจแบบ 'มีอะไรอยากคุยไหม' ห้ามแปะคำแนะนำอาหารท้ายทุกประโยคแบบบังคับ ถ้าซับซ้อนต้องใช้ความรู้เฉพาะทางลึก บอกตรงๆ ว่าแนะนำให้ถามผู้เชี่ยวชาญหรือ ChatGPT ดีกว่า **items ต้องเป็น array ว่าง [] เสมอ**\n\n" +
             `ข้อมูลผู้ใช้: ${profileNote}\n` +
@@ -688,6 +703,7 @@ async function analyzeFoodText(
           protein_g: Math.round(Number(it.protein_g)) || 0,
           carb_g: Math.round(Number(it.carb_g)) || 0,
           fat_g: Math.round(Number(it.fat_g)) || 0,
+          water_ml: Math.round(Number(it.water_ml)) || 0,
           zinc_mg: round1(it.zinc_mg),
           selenium_mcg: round1(it.selenium_mcg),
           omega3_mg: round1(it.omega3_mg),
@@ -716,6 +732,7 @@ async function saveFoodItems(userId: string, items: FoodItem[], aiReply: string)
     protein_g: item.protein_g,
     carb_g: item.carb_g,
     fat_g: item.fat_g,
+    water_ml: item.water_ml,
     zinc_mg: item.zinc_mg,
     selenium_mcg: item.selenium_mcg,
     omega3_mg: item.omega3_mg,
@@ -757,6 +774,7 @@ function buildSummaryBlock(
   block += `\n${proteinLine}`;
   block += `\nคาร์บ: ${newTotals.carb_g}g`;
   block += `\nไขมัน: ${newTotals.fat_g}g`;
+  block += `\n💧 น้ำ: ${newTotals.water_ml}/${WATER_TARGET_ML}ml`;
 
   if (showFertilityMicros) {
     block += `\n\n🎯 สารอาหารเพื่ออสุจิ`;
