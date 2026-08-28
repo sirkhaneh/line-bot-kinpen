@@ -100,12 +100,13 @@ const HELP_TEXT =
   "🍽️ บอกว่ากินอะไร — พิมพ์ชื่อเมนูตรงๆ เช่น 'ข้าวกะเพราหมู' ผมจะประมาณแคลอรี่และสารอาหารให้ พร้อมจำสะสมไว้ทั้งวัน\n\n" +
   "💧 บอกว่าดื่มน้ำ — พิมพ์เช่น 'น้ำ 1 แก้ว' ผมจะช่วยติดตามปริมาณน้ำทั้งวันให้ด้วย\n\n" +
   "💊 อาหารเสริม/วิตามิน — พิมพ์บอกได้เลย จะบันทึกไว้ว่าทานแล้ว\n\n" +
-  "🏷️ จำค่าจากฉลาก — ถ้าพิมพ์ค่าจากฉลากจริง (เช่น 'Mennevit 1 เม็ด 100mg วิตามินซี') แล้วต่อท้ายด้วยคำว่า 'จำไว้' ผมจะจำค่านี้แม่นๆ ไว้ใช้ทุกครั้งที่พิมพ์ชื่อนี้อีก\n\n" +
+  "🏷️ จำค่าจากฉลาก — ถ้าพิมพ์ค่าจากฉลากจริง แล้วต่อท้ายด้วยคำว่า 'จำไว้' ผมจะจำค่านี้แม่นๆ ไว้ใช้ทุกครั้งที่พิมพ์ชื่อนี้อีก\n\n" +
   "💬 ปรึกษาเรื่องอาหาร — ถามได้เลย เช่น 'วันนี้กินอะไรดี' 'ไก่ย่างดีไหม' 'มีอะไรถูกๆ ดีๆ แนะนำไหม'\n\n" +
   "📊 ดูสรุปยอด — พิมพ์ 'สรุปยอดวันนี้' 'สรุปรายอาทิตย์' หรือ 'สรุปเดือนนี้'\n\n" +
-  "🗑️ ลบมื้อ — พิมพ์ 'ยังไม่ได้กิน [ชื่ออาหาร]' หรือแค่ 'ยังไม่ได้กิน' เพื่อลบมื้อล่าสุด ลบหลายอย่างพร้อมกันได้ (คั่นด้วยจุลภาค ขึ้นบรรทัดใหม่ หรือเว้นวรรคก็ได้)\n\n" +
+  "🗑️ ลบมื้อ — พิมพ์ 'ยังไม่ได้กิน [ชื่ออาหาร]' หรือแค่ 'ยังไม่ได้กิน' เพื่อลบมื้อล่าสุด ลบหลายอย่างพร้อมกันได้\n\n" +
   "✏️ แก้ไขข้อมูลที่บันทึกผิด — ให้ลบของเดิมก่อนเสมอ แล้วค่อยพิมพ์รายการใหม่ที่ถูกต้อง\n\n" +
-  "💡 กินหลายอย่างพร้อมกัน — ถ้าอยากให้แยกแม่นขึ้น คั่นด้วยจุลภาคหรือใส่ปริมาณกำกับ เช่น 'ธัญพืช 1 ห่อ, โยเกิร์ต 1 ถ้วย'\n\n" +
+  "💡 กินหลายอย่างพร้อมกัน — คั่นด้วยจุลภาคหรือใส่ปริมาณกำกับ เช่น 'ธัญพืช 1 ห่อ, โยเกิร์ต 1 ถ้วย'\n\n" +
+  "📝 ข้อเสนอแนะ/ติชม — พิมพ์สิ่งที่อยากบอก แล้วต่อท้ายด้วยคำว่า 'แจ้งผู้พัฒนา' ผมจะเก็บไว้ให้ทีมงานอ่านครับ\n\n" +
   "🗣️ คุยเล่นได้ — ผมคุยเรื่องทั่วไปได้บ้าง แต่ถนัดเรื่องอาหาร/สุขภาพเป็นหลัก\n\n" +
   "พิมพ์ 'help' เมื่อไหร่ก็เรียกดูอันนี้ได้อีกครับ";
 
@@ -113,6 +114,21 @@ function isHelpRequest(text: string): boolean {
   const t = text.trim().toLowerCase().replace(/["'“”‘’.!?]/g, "");
   const helpPhrases = ["help", "ช่วยเหลือ", "คำสั่ง", "วิธีใช้", "วิธีใช้งาน", "สอนใช้งาน", "ใช้ยังไง"];
   return helpPhrases.includes(t);
+}
+
+function isFeedbackRequest(text: string): boolean {
+  const t = text.trim();
+  const phrases = ["แจ้งผู้พัฒนา", "บอกผู้พัฒนา", "ส่งให้ผู้พัฒนา", "ข้อเสนอแนะ", "อยากเสนอไอเดีย", "ติชมแอป", "feedback"];
+  return phrases.some((p) => t.includes(p));
+}
+
+async function saveFeedback(userId: string, content: string): Promise<string> {
+  const { error } = await supabase.from("feedback_notes").insert({ user_id: userId, content });
+  if (error) {
+    console.error("saveFeedback failed:", error);
+    return "ขอโทษครับ บันทึกข้อเสนอแนะไม่สำเร็จ ลองใหม่อีกครั้งนะครับ";
+  }
+  return "ขอบคุณสำหรับข้อเสนอแนะครับ 🙏 เก็บไว้ให้ทีมงานอ่านแล้วนะครับ";
 }
 
 function isUndoRequest(text: string): boolean {
@@ -306,8 +322,13 @@ async function getKnownFoods(userId: string): Promise<KnownFood[]> {
 }
 
 function findKnownMatches(userText: string, knownFoods: KnownFood[]): KnownFood[] {
+  const trimmed = userText.trim();
+  if (trimmed.length < 2) return [];
   const sorted = [...knownFoods].sort((a, b) => b.name.length - a.name.length);
-  return sorted.filter((kf) => kf.name.length > 0 && userText.includes(kf.name));
+  return sorted.filter((kf) => {
+    if (kf.name.length === 0) return false;
+    return userText.includes(kf.name) || kf.name.includes(trimmed);
+  });
 }
 
 function buildKnownFoodsHint(matches: KnownFood[]): string {
@@ -316,7 +337,7 @@ function buildKnownFoodsHint(matches: KnownFood[]): string {
     (kf) =>
       `- "${kf.name}": calories=${kf.calories}, protein_g=${kf.protein_g}, carb_g=${kf.carb_g}, fat_g=${kf.fat_g}, water_ml=${kf.water_ml}, zinc_mg=${kf.zinc_mg}, selenium_mcg=${kf.selenium_mcg}, omega3_mg=${kf.omega3_mg}, folate_mcg=${kf.folate_mcg}, vitamin_c_mg=${kf.vitamin_c_mg}, vitamin_d_mcg=${kf.vitamin_d_mcg}, vitamin_e_mg=${kf.vitamin_e_mg}`
   );
-  return `\n\n**สำคัญ: ผู้ใช้เคยยืนยันค่าที่แน่นอนไว้แล้วสำหรับรายการต่อไปนี้ ถ้าข้อความปัจจุบันพูดถึงรายการเหล่านี้ ต้องใช้ตัวเลขนี้เป๊ะๆ ห้ามประมาณใหม่เอง และในข้อความ reply ต้องพูดอย่างมั่นใจโดยระบุตัวเลขเหล่านี้ตรงๆ ห้ามพูดว่า 'ข้อมูลยังไม่แน่ชัด' หรือ 'ไม่มีตัวเลขเฉพาะเจาะจง' เด็ดขาด เพราะมีข้อมูลที่แน่นอนจากผู้ใช้อยู่แล้ว:**\n${lines.join("\n")}`;
+  return `\n\n**สำคัญ: ผู้ใช้เคยยืนยันค่าที่แน่นอนไว้แล้วสำหรับรายการต่อไปนี้ ถ้าข้อความปัจจุบันพูดถึงรายการเหล่านี้ ต้องใช้ตัวเลขนี้เป๊ะๆ ห้ามประมาณใหม่เอง และในข้อความ reply ต้องพูดอย่างมั่นใจโดยระบุตัวเลขเหล่านี้ตรงๆ ห้ามพูดว่า 'ข้อมูลยังไม่แน่ชัด' เด็ดขาด:**\n${lines.join("\n")}`;
 }
 
 function buildKnownFoodsUsedLine(matches: KnownFood[]): string {
@@ -670,10 +691,7 @@ function buildPeriodSummary(
     return `ยังไม่มีข้อมูลใน${periodLabel}เลยครับ ลองบันทึกอาหารสักพักแล้วค่อยกลับมาดูสรุปนะครับ 🙂`;
   }
 
-  // สำคัญ: หารด้วยจำนวนวันที่บันทึกจริง (daysLogged) ไม่ใช่ความยาวช่วงเวลาเต็ม (days)
-  // ป้องกันค่าเฉลี่ยต่ำผิดปกติเวลาบันทึกไม่ครบทุกวัน (ตรงกับมาตรฐานของแอปติดตามโภชนาการชั้นนำ)
   const divisor = stats.daysLogged;
-
   const pct = (value: number, target: number) => Math.round((value / target) * 100);
 
   const avg = {
@@ -981,6 +999,12 @@ export async function POST(req: NextRequest) {
 
         if (isHelpRequest(userText)) {
           await replyMessage(replyToken, HELP_TEXT);
+          continue;
+        }
+
+        if (isFeedbackRequest(userText)) {
+          const result = await saveFeedback(userId, userText);
+          await replyMessage(replyToken, result);
           continue;
         }
 
