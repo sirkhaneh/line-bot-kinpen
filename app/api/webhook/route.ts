@@ -587,12 +587,12 @@ interface ChatMessage {
 }
 
 async function getRecentChatHistory(userId: string, limit = 6): Promise<ChatMessage[]> {
-  const sevenDaysAgoISO = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const startOfDayISO = getThailandStartOfDayISO();
   const { data, error } = await supabase
     .from("chat_messages")
     .select("role, content")
     .eq("user_id", userId)
-    .gte("created_at", sevenDaysAgoISO)
+    .gte("created_at", startOfDayISO)
     .order("created_at", { ascending: false })
     .limit(limit);
 
