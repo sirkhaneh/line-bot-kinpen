@@ -98,13 +98,14 @@ const WELCOME_TEXT =
 const HELP_TEXT =
   "📖 วิธีใช้กินเป็น\n\n" +
   "🍽️ บอกว่ากินอะไร — พิมพ์ชื่อเมนูตรงๆ เช่น 'ข้าวกะเพราหมู' ผมจะประมาณแคลอรี่และสารอาหารให้ พร้อมจำสะสมไว้ทั้งวัน\n\n" +
-  "💧 บอกว่าดื่มน้ำ — พิมพ์เช่น 'น้ำ 1 แก้ว' หรือ 'น้ำ 500ml' ผมจะช่วยติดตามปริมาณน้ำทั้งวันให้ด้วย\n\n" +
-  "💊 อาหารเสริม/วิตามิน — พิมพ์บอกได้เลย จะบันทึกไว้ว่าทานแล้ว แม้จะไม่มีข้อมูลแคลอรี่ก็ตาม\n\n" +
+  "💧 บอกว่าดื่มน้ำ — พิมพ์เช่น 'น้ำ 1 แก้ว' ผมจะช่วยติดตามปริมาณน้ำทั้งวันให้ด้วย\n\n" +
+  "💊 อาหารเสริม/วิตามิน — พิมพ์บอกได้เลย จะบันทึกไว้ว่าทานแล้ว\n\n" +
+  "🏷️ จำค่าจากฉลาก — ถ้าพิมพ์ค่าจากฉลากจริง (เช่น 'Mennevit 1 เม็ด 100mg วิตามินซี') แล้วต่อท้ายด้วยคำว่า 'จำไว้' ผมจะจำค่านี้แม่นๆ ไว้ใช้ทุกครั้งที่พิมพ์ชื่อนี้อีก\n\n" +
   "💬 ปรึกษาเรื่องอาหาร — ถามได้เลย เช่น 'วันนี้กินอะไรดี' 'ไก่ย่างดีไหม' 'มีอะไรถูกๆ ดีๆ แนะนำไหม'\n\n" +
   "📊 ดูสรุปยอด — พิมพ์ 'สรุปยอดวันนี้' 'สรุปรายอาทิตย์' หรือ 'สรุปเดือนนี้'\n\n" +
   "🗑️ ลบมื้อ — พิมพ์ 'ยังไม่ได้กิน [ชื่ออาหาร]' หรือแค่ 'ยังไม่ได้กิน' เพื่อลบมื้อล่าสุด ลบหลายอย่างพร้อมกันได้ (คั่นด้วยจุลภาค ขึ้นบรรทัดใหม่ หรือเว้นวรรคก็ได้)\n\n" +
-  "✏️ แก้ไขข้อมูลที่บันทึกผิด — ให้ลบของเดิมก่อนเสมอ (เช่น 'ลบ นม') แล้วค่อยพิมพ์รายการใหม่ที่ถูกต้อง ระบบยังไม่รองรับการแก้ไขทับข้อความเดิมโดยตรง\n\n" +
-  "💡 กินหลายอย่างพร้อมกัน — ถ้าอยากให้แยกแม่นขึ้น คั่นด้วยจุลภาคหรือใส่ปริมาณกำกับ เช่น 'ธัญพืช 1 ห่อ, โยเกิร์ต 1 ถ้วย' แทนที่จะพิมพ์ติดกันเฉยๆ\n\n" +
+  "✏️ แก้ไขข้อมูลที่บันทึกผิด — ให้ลบของเดิมก่อนเสมอ แล้วค่อยพิมพ์รายการใหม่ที่ถูกต้อง\n\n" +
+  "💡 กินหลายอย่างพร้อมกัน — ถ้าอยากให้แยกแม่นขึ้น คั่นด้วยจุลภาคหรือใส่ปริมาณกำกับ เช่น 'ธัญพืช 1 ห่อ, โยเกิร์ต 1 ถ้วย'\n\n" +
   "🗣️ คุยเล่นได้ — ผมคุยเรื่องทั่วไปได้บ้าง แต่ถนัดเรื่องอาหาร/สุขภาพเป็นหลัก\n\n" +
   "พิมพ์ 'help' เมื่อไหร่ก็เรียกดูอันนี้ได้อีกครับ";
 
@@ -225,12 +226,107 @@ async function undoMeals(userId: string, rawTarget: string | null): Promise<stri
   return `หารายการที่ตรงกับ "${rawTarget}" ในวันนี้ไม่เจอครับ วันนี้บันทึกไว้: ${list}\n\nลองพิมพ์ชื่อให้ตรงกับที่บันทึกไว้ดูอีกครั้งนะครับ`;
 }
 
+function isRememberRequest(text: string): boolean {
+  const t = text.trim();
+  const phrases = ["จำไว้", "จำค่านี้", "บันทึกเป็นค่ามาตรฐาน", "เซฟไว้", "จำสูตรนี้"];
+  return phrases.some((p) => t.includes(p));
+}
+
+async function rememberLastMeal(userId: string): Promise<string> {
+  const startOfDayISO = getThailandStartOfDayISO();
+
+  const { data, error } = await supabase
+    .from("food_logs")
+    .select(
+      "food_text, calories, protein_g, carb_g, fat_g, water_ml, zinc_mg, selenium_mcg, omega3_mg, folate_mcg, vitamin_c_mg, vitamin_d_mcg, vitamin_e_mg"
+    )
+    .eq("user_id", userId)
+    .gte("created_at", startOfDayISO)
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (error || !data || data.length === 0) {
+    return "วันนี้ยังไม่มีรายการอาหารให้จำเลยครับ 🙂";
+  }
+
+  const last = data[0];
+  const { error: upsertError } = await supabase.from("known_foods").upsert(
+    {
+      user_id: userId,
+      name: last.food_text,
+      calories: last.calories,
+      protein_g: last.protein_g,
+      carb_g: last.carb_g,
+      fat_g: last.fat_g,
+      water_ml: last.water_ml,
+      zinc_mg: last.zinc_mg,
+      selenium_mcg: last.selenium_mcg,
+      omega3_mg: last.omega3_mg,
+      folate_mcg: last.folate_mcg,
+      vitamin_c_mg: last.vitamin_c_mg,
+      vitamin_d_mcg: last.vitamin_d_mcg,
+      vitamin_e_mg: last.vitamin_e_mg,
+    },
+    { onConflict: "user_id,name" }
+  );
+
+  if (upsertError) {
+    console.error("rememberLastMeal failed:", upsertError);
+    return "ขอโทษครับ จำค่านี้ไม่สำเร็จ ลองใหม่อีกครั้งนะครับ";
+  }
+
+  return `จำค่าของ "${last.food_text}" ไว้แล้วครับ ✅ ครั้งต่อไปพิมพ์ชื่อนี้ ผมจะใช้ค่านี้ให้แม่นยำเหมือนเดิมทุกครั้ง`;
+}
+
+interface KnownFood {
+  name: string;
+  calories: number;
+  protein_g: number;
+  carb_g: number;
+  fat_g: number;
+  water_ml: number;
+  zinc_mg: number;
+  selenium_mcg: number;
+  omega3_mg: number;
+  folate_mcg: number;
+  vitamin_c_mg: number;
+  vitamin_d_mcg: number;
+  vitamin_e_mg: number;
+}
+
+async function getKnownFoods(userId: string): Promise<KnownFood[]> {
+  const { data, error } = await supabase
+    .from("known_foods")
+    .select(
+      "name, calories, protein_g, carb_g, fat_g, water_ml, zinc_mg, selenium_mcg, omega3_mg, folate_mcg, vitamin_c_mg, vitamin_d_mcg, vitamin_e_mg"
+    )
+    .eq("user_id", userId);
+  if (error || !data) return [];
+  return data as KnownFood[];
+}
+
+function findKnownMatches(userText: string, knownFoods: KnownFood[]): KnownFood[] {
+  const sorted = [...knownFoods].sort((a, b) => b.name.length - a.name.length);
+  return sorted.filter((kf) => kf.name.length > 0 && userText.includes(kf.name));
+}
+
+function buildKnownFoodsHint(matches: KnownFood[]): string {
+  if (matches.length === 0) return "";
+  const lines = matches.map(
+    (kf) =>
+      `- "${kf.name}": calories=${kf.calories}, protein_g=${kf.protein_g}, carb_g=${kf.carb_g}, fat_g=${kf.fat_g}, water_ml=${kf.water_ml}, zinc_mg=${kf.zinc_mg}, selenium_mcg=${kf.selenium_mcg}, omega3_mg=${kf.omega3_mg}, folate_mcg=${kf.folate_mcg}, vitamin_c_mg=${kf.vitamin_c_mg}, vitamin_d_mcg=${kf.vitamin_d_mcg}, vitamin_e_mg=${kf.vitamin_e_mg}`
+  );
+  return `\n\n**สำคัญ: ผู้ใช้เคยยืนยันค่าที่แน่นอนไว้แล้วสำหรับรายการต่อไปนี้ ถ้าข้อความปัจจุบันพูดถึงรายการเหล่านี้ ต้องใช้ตัวเลขนี้เป๊ะๆ ห้ามประมาณใหม่เอง:**\n${lines.join("\n")}`;
+}
+
 const FERTILITY_TARGETS = {
   zinc_mg: 11,
   selenium_mcg: 55,
   omega3_mg: 300,
   folate_mcg: 400,
   vitamin_c_mg: 90,
+  vitamin_d_mcg: 15,
+  vitamin_e_mg: 15,
 };
 
 const WATER_TARGET_ML = 2500;
@@ -343,7 +439,7 @@ async function handleOnboarding(userId: string, user: UserProfile, text: string,
 
     let extraNote = "";
     if (user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ") {
-      extraNote = `\nสารสำคัญที่ควรได้ครบทุกวัน: สังกะสี ~${FERTILITY_TARGETS.zinc_mg}mg, ซีลีเนียม ~${FERTILITY_TARGETS.selenium_mcg}mcg, โฟเลต ~${FERTILITY_TARGETS.folate_mcg}mcg, วิตามินซี ~${FERTILITY_TARGETS.vitamin_c_mg}mg, โอเมก้า-3 ~${FERTILITY_TARGETS.omega3_mg}mg`;
+      extraNote = `\nสารสำคัญที่ควรได้ครบทุกวัน: สังกะสี ~${FERTILITY_TARGETS.zinc_mg}mg, ซีลีเนียม ~${FERTILITY_TARGETS.selenium_mcg}mcg, โฟเลต ~${FERTILITY_TARGETS.folate_mcg}mcg, วิตามินซี ~${FERTILITY_TARGETS.vitamin_c_mg}mg, วิตามินดี ~${FERTILITY_TARGETS.vitamin_d_mcg}mcg, วิตามินอี ~${FERTILITY_TARGETS.vitamin_e_mg}mg, โอเมก้า-3 ~${FERTILITY_TARGETS.omega3_mg}mg`;
     }
 
     await replyMessage(
@@ -376,6 +472,8 @@ interface DailyTotals {
   omega3_mg: number;
   folate_mcg: number;
   vitamin_c_mg: number;
+  vitamin_d_mcg: number;
+  vitamin_e_mg: number;
 }
 
 const EMPTY_TOTALS: DailyTotals = {
@@ -389,6 +487,8 @@ const EMPTY_TOTALS: DailyTotals = {
   omega3_mg: 0,
   folate_mcg: 0,
   vitamin_c_mg: 0,
+  vitamin_d_mcg: 0,
+  vitamin_e_mg: 0,
 };
 
 function roundTotals(raw: DailyTotals): DailyTotals {
@@ -403,8 +503,13 @@ function roundTotals(raw: DailyTotals): DailyTotals {
     omega3_mg: Math.round(raw.omega3_mg * 10) / 10,
     folate_mcg: Math.round(raw.folate_mcg * 10) / 10,
     vitamin_c_mg: Math.round(raw.vitamin_c_mg * 10) / 10,
+    vitamin_d_mcg: Math.round(raw.vitamin_d_mcg * 10) / 10,
+    vitamin_e_mg: Math.round(raw.vitamin_e_mg * 10) / 10,
   };
 }
+
+const FOOD_LOG_COLUMNS =
+  "food_text, calories, protein_g, carb_g, fat_g, water_ml, zinc_mg, selenium_mcg, omega3_mg, folate_mcg, vitamin_c_mg, vitamin_d_mcg, vitamin_e_mg";
 
 async function getTodayTotals(
   userId: string
@@ -413,9 +518,7 @@ async function getTodayTotals(
 
   const { data, error } = await supabase
     .from("food_logs")
-    .select(
-      "food_text, calories, protein_g, carb_g, fat_g, water_ml, zinc_mg, selenium_mcg, omega3_mg, folate_mcg, vitamin_c_mg"
-    )
+    .select(FOOD_LOG_COLUMNS)
     .eq("user_id", userId)
     .gte("created_at", startOfDayISO);
 
@@ -435,6 +538,8 @@ async function getTodayTotals(
       omega3_mg: acc.omega3_mg + (row.omega3_mg || 0),
       folate_mcg: acc.folate_mcg + (row.folate_mcg || 0),
       vitamin_c_mg: acc.vitamin_c_mg + (row.vitamin_c_mg || 0),
+      vitamin_d_mcg: acc.vitamin_d_mcg + (row.vitamin_d_mcg || 0),
+      vitamin_e_mg: acc.vitamin_e_mg + (row.vitamin_e_mg || 0),
     }),
     { ...EMPTY_TOTALS }
   );
@@ -486,6 +591,8 @@ function buildDailySummaryReply(
     msg += `\nOmega-3: ${totals.omega3_mg}/${FERTILITY_TARGETS.omega3_mg}mg`;
     msg += `\nFolate: ${totals.folate_mcg}/${FERTILITY_TARGETS.folate_mcg}mcg`;
     msg += `\nVit C: ${totals.vitamin_c_mg}/${FERTILITY_TARGETS.vitamin_c_mg}mg`;
+    msg += `\nVit D: ${totals.vitamin_d_mcg}/${FERTILITY_TARGETS.vitamin_d_mcg}mcg`;
+    msg += `\nVit E: ${totals.vitamin_e_mg}/${FERTILITY_TARGETS.vitamin_e_mg}mg`;
   }
 
   return msg;
@@ -499,9 +606,7 @@ async function getPeriodStats(
 
   const { data, error } = await supabase
     .from("food_logs")
-    .select(
-      "created_at, calories, protein_g, carb_g, fat_g, water_ml, zinc_mg, selenium_mcg, omega3_mg, folate_mcg, vitamin_c_mg"
-    )
+    .select(`created_at, ${FOOD_LOG_COLUMNS}`)
     .eq("user_id", userId)
     .gte("created_at", cutoffISO);
 
@@ -519,6 +624,8 @@ async function getPeriodStats(
       omega3_mg: acc.omega3_mg + (row.omega3_mg || 0),
       folate_mcg: acc.folate_mcg + (row.folate_mcg || 0),
       vitamin_c_mg: acc.vitamin_c_mg + (row.vitamin_c_mg || 0),
+      vitamin_d_mcg: acc.vitamin_d_mcg + (row.vitamin_d_mcg || 0),
+      vitamin_e_mg: acc.vitamin_e_mg + (row.vitamin_e_mg || 0),
     }),
     { ...EMPTY_TOTALS }
   );
@@ -546,22 +653,28 @@ function buildPeriodSummary(
     return `ยังไม่มีข้อมูลใน${periodLabel}เลยครับ ลองบันทึกอาหารสักพักแล้วค่อยกลับมาดูสรุปนะครับ 🙂`;
   }
 
+  // สำคัญ: หารด้วยจำนวนวันที่บันทึกจริง (daysLogged) ไม่ใช่ความยาวช่วงเวลาเต็ม (days)
+  // ป้องกันค่าเฉลี่ยต่ำผิดปกติเวลาบันทึกไม่ครบทุกวัน (ตรงกับมาตรฐานของแอปติดตามโภชนาการชั้นนำ)
+  const divisor = stats.daysLogged;
+
   const pct = (value: number, target: number) => Math.round((value / target) * 100);
 
   const avg = {
-    calories: Math.round(stats.totals.calories / days),
-    protein_g: Math.round(stats.totals.protein_g / days),
-    carb_g: Math.round(stats.totals.carb_g / days),
-    fat_g: Math.round(stats.totals.fat_g / days),
-    water_ml: Math.round(stats.totals.water_ml / days),
-    zinc_mg: Math.round((stats.totals.zinc_mg / days) * 10) / 10,
-    selenium_mcg: Math.round((stats.totals.selenium_mcg / days) * 10) / 10,
-    omega3_mg: Math.round((stats.totals.omega3_mg / days) * 10) / 10,
-    folate_mcg: Math.round((stats.totals.folate_mcg / days) * 10) / 10,
-    vitamin_c_mg: Math.round((stats.totals.vitamin_c_mg / days) * 10) / 10,
+    calories: Math.round(stats.totals.calories / divisor),
+    protein_g: Math.round(stats.totals.protein_g / divisor),
+    carb_g: Math.round(stats.totals.carb_g / divisor),
+    fat_g: Math.round(stats.totals.fat_g / divisor),
+    water_ml: Math.round(stats.totals.water_ml / divisor),
+    zinc_mg: Math.round((stats.totals.zinc_mg / divisor) * 10) / 10,
+    selenium_mcg: Math.round((stats.totals.selenium_mcg / divisor) * 10) / 10,
+    omega3_mg: Math.round((stats.totals.omega3_mg / divisor) * 10) / 10,
+    folate_mcg: Math.round((stats.totals.folate_mcg / divisor) * 10) / 10,
+    vitamin_c_mg: Math.round((stats.totals.vitamin_c_mg / divisor) * 10) / 10,
+    vitamin_d_mcg: Math.round((stats.totals.vitamin_d_mcg / divisor) * 10) / 10,
+    vitamin_e_mg: Math.round((stats.totals.vitamin_e_mg / divisor) * 10) / 10,
   };
 
-  let msg = `📅 สรุป${periodLabel} (บันทึกไป ${stats.daysLogged}/${days} วัน)\n\nเฉลี่ยต่อวัน:\n`;
+  let msg = `📅 สรุป${periodLabel} (บันทึกไป ${stats.daysLogged}/${days} วัน)\n\nเฉลี่ยต่อวันที่มีการบันทึก:\n`;
   msg += `แคล: ${avg.calories}`;
   if (targetCalories) msg += `/${targetCalories} (${pct(avg.calories, targetCalories)}%)`;
   msg += `\nโปรตีน: ${avg.protein_g}g`;
@@ -575,7 +688,9 @@ function buildPeriodSummary(
     msg += `Selenium: ${avg.selenium_mcg}/${FERTILITY_TARGETS.selenium_mcg}mcg (${pct(avg.selenium_mcg, FERTILITY_TARGETS.selenium_mcg)}%)\n`;
     msg += `Omega-3: ${avg.omega3_mg}/${FERTILITY_TARGETS.omega3_mg}mg (${pct(avg.omega3_mg, FERTILITY_TARGETS.omega3_mg)}%)\n`;
     msg += `Folate: ${avg.folate_mcg}/${FERTILITY_TARGETS.folate_mcg}mcg (${pct(avg.folate_mcg, FERTILITY_TARGETS.folate_mcg)}%)\n`;
-    msg += `Vit C: ${avg.vitamin_c_mg}/${FERTILITY_TARGETS.vitamin_c_mg}mg (${pct(avg.vitamin_c_mg, FERTILITY_TARGETS.vitamin_c_mg)}%)`;
+    msg += `Vit C: ${avg.vitamin_c_mg}/${FERTILITY_TARGETS.vitamin_c_mg}mg (${pct(avg.vitamin_c_mg, FERTILITY_TARGETS.vitamin_c_mg)}%)\n`;
+    msg += `Vit D: ${avg.vitamin_d_mcg}/${FERTILITY_TARGETS.vitamin_d_mcg}mcg (${pct(avg.vitamin_d_mcg, FERTILITY_TARGETS.vitamin_d_mcg)}%)\n`;
+    msg += `Vit E: ${avg.vitamin_e_mg}/${FERTILITY_TARGETS.vitamin_e_mg}mg (${pct(avg.vitamin_e_mg, FERTILITY_TARGETS.vitamin_e_mg)}%)`;
   }
 
   return msg;
@@ -616,6 +731,8 @@ interface FoodItem {
   omega3_mg: number;
   folate_mcg: number;
   vitamin_c_mg: number;
+  vitamin_d_mcg: number;
+  vitamin_e_mg: number;
 }
 
 interface AiResult {
@@ -628,7 +745,8 @@ async function analyzeFoodText(
   user: UserProfile,
   previousTotals: DailyTotals,
   foodListSoFar: string,
-  chatHistory: ChatMessage[]
+  chatHistory: ChatMessage[],
+  knownMatches: KnownFood[]
 ): Promise<AiResult> {
   const contextNote =
     foodListSoFar.length > 0
@@ -639,7 +757,7 @@ async function analyzeFoodText(
 
   const fertilityInstruction =
     user.gender === "male" && user.goal === "เพิ่มคุณภาพอสุจิ"
-      ? "เน้นชี้จุดที่เกี่ยวกับ zinc, selenium, omega-3, folate, vitamin C เสมอ"
+      ? "เน้นชี้จุดที่เกี่ยวกับ zinc, selenium, omega-3, folate, vitamin C, vitamin D, vitamin E เสมอ"
       : user.gender === "male"
       ? "ถ้าเกี่ยวกับสุขภาพสืบพันธุ์เพศชายชัดเจน พูดถึงสั้นๆ ได้ แต่ไม่ต้องเน้น"
       : "ห้ามพูดเรื่องสุขภาพสืบพันธุ์เพศชายเด็ดขาด";
@@ -652,6 +770,7 @@ async function analyzeFoodText(
       : "ให้คำแนะนำสมดุลทั่วไป";
 
   const historyMessages = chatHistory.map((m) => ({ role: m.role, content: m.content }));
+  const knownFoodsHint = buildKnownFoodsHint(knownMatches);
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -669,12 +788,13 @@ async function analyzeFoodText(
             "คุณคือ 'กินเป็น' ผู้ช่วย AI ด้านโภชนาการที่พูดจาเป็นกันเอง เหมือนเพื่อนที่เข้าใจอาหาร ไม่ใช่หมอหรือนักโภชนาการ\n\n" +
             "คุณมีบทสนทนาล่าสุด (ถ้ามี) ส่งมาก่อนข้อความปัจจุบัน ใช้บริบทนั้นแค่เพื่อเข้าใจสถานการณ์และให้คำแนะนำต่อเนื่อง ไม่ใช่เพื่อนำมา log ซ้ำ\n\n" +
             "ตอบกลับเป็น JSON เท่านั้น ตามโครงสร้างนี้:\n" +
-            '{"reply": "ข้อความภาษาไทย", "items": [{"name": "ชื่ออาหารพร้อมปริมาณ/หน่วยเสมอ เช่น \'ไข่ต้ม 2 ฟอง\' \'ข้าว 1 จาน\' ห้ามใส่แค่ชื่อเปล่าๆ", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข, "water_ml": ตัวเลข, "zinc_mg": ตัวเลข, "selenium_mcg": ตัวเลข, "omega3_mg": ตัวเลข, "folate_mcg": ตัวเลข, "vitamin_c_mg": ตัวเลข}]}\n\n' +
+            '{"reply": "ข้อความภาษาไทย", "items": [{"name": "ชื่ออาหารพร้อมปริมาณ/หน่วยเสมอ เช่น \'ไข่ต้ม 2 ฟอง\' \'ข้าว 1 จาน\' ห้ามใส่แค่ชื่อเปล่าๆ", "calories": ตัวเลข, "protein_g": ตัวเลข, "carb_g": ตัวเลข, "fat_g": ตัวเลข, "water_ml": ตัวเลข, "zinc_mg": ตัวเลข, "selenium_mcg": ตัวเลข, "omega3_mg": ตัวเลข, "folate_mcg": ตัวเลข, "vitamin_c_mg": ตัวเลข, "vitamin_d_mcg": ตัวเลข, "vitamin_e_mg": ตัวเลข}]}\n\n' +
             "**กฎสำคัญเรื่อง items: ต้องมีเฉพาะรายการที่ถูกกล่าวถึงในข้อความปัจจุบันของผู้ใช้เท่านั้น ห้ามนำรายการจากบทสนทนาก่อนหน้ามาใส่ซ้ำอีก**\n\n" +
-            "**เรื่องอาหารเสริม/วิตามิน/ยา:** ถ้าผู้ใช้บอกว่าทานอาหารเสริม/วิตามิน/ยา (เช่น Mennevit) ให้ใส่เป็น item เสมอแม้จะไม่รู้ค่าแคลอรี่/สารอาหารแน่ชัด (ใส่ตัวเลขที่ไม่รู้เป็น 0 ทั้งหมด) เพราะการบันทึกว่าทานแล้วมีประโยชน์ต่อการติดตาม ห้ามปล่อยให้ items ว่างเปล่าเพียงเพราะไม่มีข้อมูลตัวเลข\n\n" +
-            "**เรื่องน้ำดื่ม:** ถ้าผู้ใช้บอกว่าดื่มน้ำเปล่า ให้ใส่เป็น item (เช่น name: 'น้ำเปล่า 1 แก้ว') ประมาณ water_ml ตามหน่วยมาตรฐาน (1 แก้ว≈250ml, 1 ขวดเล็ก≈500ml, 1 ขวดใหญ่≈1500ml) ค่าอื่นๆ เป็น 0 ถ้าเป็นเครื่องดื่มอื่น (กาแฟ นม น้ำอัดลม) ให้ water_ml เป็น 0 เสมอ นับเฉพาะน้ำเปล่าจริงๆ\n\n" +
+            "**เรื่องอาหารเสริม/วิตามิน/ยา:** ให้ใส่เป็น item เสมอแม้จะไม่รู้ค่าแคลอรี่/สารอาหารแน่ชัด (ใส่ตัวเลขที่ไม่รู้เป็น 0) ห้ามปล่อยให้ items ว่างเปล่าเพียงเพราะไม่มีข้อมูลตัวเลข\n\n" +
+            "**เรื่องน้ำดื่ม:** ถ้าผู้ใช้บอกว่าดื่มน้ำเปล่า ให้ใส่เป็น item ประมาณ water_ml ตามหน่วยมาตรฐาน (1 แก้ว≈250ml, 1 ขวดเล็ก≈500ml, 1 ขวดใหญ่≈1500ml) ค่าอื่นเป็น 0 เครื่องดื่มอื่น (กาแฟ นม น้ำอัดลม) water_ml เป็น 0 เสมอ\n\n" +
+            `${knownFoodsHint}\n\n` +
             "ผู้ใช้พิมพ์มาได้หลายแบบ แยกแยะและตอบตามนี้:\n\n" +
-            "แบบที่ 1 — รายงานว่ากินอะไรไปแล้ว/กำลังกิน (รวมอาหารเสริมและน้ำ): ใส่ items ตามจริง ประมาณค่าเป็นตัวเลขจริง ปรับตามปริมาณจริงที่บอก สมมติหน่วยมาตรฐานถ้าไม่ระบุ ใน reply พูดถึงชื่อเมนู+ปริมาณ+ค่าพลังงานตัวเลขชัดเจนพร้อมโปรตีน, ข้อสังเกตตามเป้าหมาย, คำแนะนำมื้อถัดไปสั้นๆ ห้ามพูดยอดสะสมรวมทั้งวันหรือบวกเลขเอง\n\n" +
+            "แบบที่ 1 — รายงานว่ากินอะไรไปแล้ว/กำลังกิน: ใส่ items ตามจริง ประมาณค่าเป็นตัวเลขจริง ปรับตามปริมาณจริงที่บอก สมมติหน่วยมาตรฐานถ้าไม่ระบุ ใน reply พูดถึงชื่อเมนู+ปริมาณ+ค่าพลังงานตัวเลขชัดเจนพร้อมโปรตีน, ข้อสังเกตตามเป้าหมาย, คำแนะนำมื้อถัดไปสั้นๆ ห้ามพูดยอดสะสมรวมทั้งวันหรือบวกเลขเอง\n\n" +
             "แบบที่ 2 — ขอคำแนะนำ/ปรึกษาเรื่องอาหาร (ยังไม่ได้กิน): ตอบแบบเพื่อนที่รู้เรื่องอาหารจริงๆ แนะนำเมนูไทยจริงหาซื้อง่ายราคาไม่แพง คุยธรรมชาติ ไม่ต้องรีบสรุป **items ต้องเป็น array ว่าง [] เสมอ**\n\n" +
             "แบบที่ 3 — เรื่องทั่วไปไม่เกี่ยวอาหาร/สุขภาพเลย: คุยธรรมชาติสั้นๆ ห้ามใช้ประโยคจำเจแบบ 'มีอะไรอยากคุยไหม' ห้ามแปะคำแนะนำอาหารท้ายทุกประโยคแบบบังคับ ถ้าซับซ้อนต้องใช้ความรู้เฉพาะทางลึก บอกตรงๆ ว่าแนะนำให้ถามผู้เชี่ยวชาญหรือ ChatGPT ดีกว่า **items ต้องเป็น array ว่าง [] เสมอ**\n\n" +
             `ข้อมูลผู้ใช้: ${profileNote}\n` +
@@ -709,6 +829,8 @@ async function analyzeFoodText(
           omega3_mg: round1(it.omega3_mg),
           folate_mcg: round1(it.folate_mcg),
           vitamin_c_mg: round1(it.vitamin_c_mg),
+          vitamin_d_mcg: round1(it.vitamin_d_mcg),
+          vitamin_e_mg: round1(it.vitamin_e_mg),
         }))
       : [];
     return {
@@ -738,6 +860,8 @@ async function saveFoodItems(userId: string, items: FoodItem[], aiReply: string)
     omega3_mg: item.omega3_mg,
     folate_mcg: item.folate_mcg,
     vitamin_c_mg: item.vitamin_c_mg,
+    vitamin_d_mcg: item.vitamin_d_mcg,
+    vitamin_e_mg: item.vitamin_e_mg,
     ai_response: aiReply,
   }));
   const { error } = await supabase.from("food_logs").insert(rows);
@@ -783,6 +907,8 @@ function buildSummaryBlock(
     block += `\nOmega-3: ${newTotals.omega3_mg}/${FERTILITY_TARGETS.omega3_mg}mg`;
     block += `\nFolate: ${newTotals.folate_mcg}/${FERTILITY_TARGETS.folate_mcg}mcg`;
     block += `\nVit C: ${newTotals.vitamin_c_mg}/${FERTILITY_TARGETS.vitamin_c_mg}mg`;
+    block += `\nVit D: ${newTotals.vitamin_d_mcg}/${FERTILITY_TARGETS.vitamin_d_mcg}mcg`;
+    block += `\nVit E: ${newTotals.vitamin_e_mg}/${FERTILITY_TARGETS.vitamin_e_mg}mg`;
   }
 
   return block;
@@ -841,6 +967,12 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
+        if (isRememberRequest(userText)) {
+          const result = await rememberLastMeal(userId);
+          await replyMessage(replyToken, result);
+          continue;
+        }
+
         if (isUndoRequest(userText)) {
           const rawTarget = extractUndoTargetRaw(userText);
           const undoResult = await undoMeals(userId, rawTarget);
@@ -882,11 +1014,13 @@ export async function POST(req: NextRequest) {
 
         await showLoadingAnimation(userId, 20);
 
-        const [chatHistory, { totals: previousTotals, foodList }] = await Promise.all([
+        const [chatHistory, { totals: previousTotals, foodList }, knownFoods] = await Promise.all([
           getRecentChatHistory(userId),
           getTodayTotals(userId),
+          getKnownFoods(userId),
         ]);
-        const result = await analyzeFoodText(userText, user, previousTotals, foodList, chatHistory);
+        const knownMatches = findKnownMatches(userText, knownFoods);
+        const result = await analyzeFoodText(userText, user, previousTotals, foodList, chatHistory, knownMatches);
 
         const isFoodMessage = result.items.length > 0;
 
