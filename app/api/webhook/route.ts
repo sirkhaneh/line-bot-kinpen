@@ -316,7 +316,7 @@ function buildKnownFoodsHint(matches: KnownFood[]): string {
     (kf) =>
       `- "${kf.name}": calories=${kf.calories}, protein_g=${kf.protein_g}, carb_g=${kf.carb_g}, fat_g=${kf.fat_g}, water_ml=${kf.water_ml}, zinc_mg=${kf.zinc_mg}, selenium_mcg=${kf.selenium_mcg}, omega3_mg=${kf.omega3_mg}, folate_mcg=${kf.folate_mcg}, vitamin_c_mg=${kf.vitamin_c_mg}, vitamin_d_mcg=${kf.vitamin_d_mcg}, vitamin_e_mg=${kf.vitamin_e_mg}`
   );
-  return `\n\n**สำคัญ: ผู้ใช้เคยยืนยันค่าที่แน่นอนไว้แล้วสำหรับรายการต่อไปนี้ ถ้าข้อความปัจจุบันพูดถึงรายการเหล่านี้ ต้องใช้ตัวเลขนี้เป๊ะๆ ห้ามประมาณใหม่เอง:**\n${lines.join("\n")}`;
+  return `\n\n**สำคัญ: ผู้ใช้เคยยืนยันค่าที่แน่นอนไว้แล้วสำหรับรายการต่อไปนี้ ถ้าข้อความปัจจุบันพูดถึงรายการเหล่านี้ ต้องใช้ตัวเลขนี้เป๊ะๆ ห้ามประมาณใหม่เอง และในข้อความ reply ต้องพูดอย่างมั่นใจโดยระบุตัวเลขเหล่านี้ตรงๆ ห้ามพูดว่า 'ข้อมูลยังไม่แน่ชัด' หรือ 'ไม่มีตัวเลขเฉพาะเจาะจง' เด็ดขาด เพราะมีข้อมูลที่แน่นอนจากผู้ใช้อยู่แล้ว:**\n${lines.join("\n")}`;
 }
 
 const FERTILITY_TARGETS = {
